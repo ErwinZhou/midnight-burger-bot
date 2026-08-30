@@ -96,13 +96,13 @@ Here are a few worthwhile variations:
   $ node Maekfile.js -q -j1
 
 # Variation: run game if build succeeds:
-  $ node Maekfile.js && dist/pong
+  $ node Maekfile.js && dist/game
 
 # Variation: show commands being run (perhaps useful for debugging):
   $ node Maekfile.js -v
 ```
 
-*Windows Note:* you will need to use a command prompt with the visual studio tools and variables configured. The "x64 Native Tools Command Prompt for VS2022" start menu option provides this option.
+*Windows Note:* you will need to use a command prompt with the visual studio tools and variables configured. The "x64 Native Tools Command Prompt for VS2026" start menu option provides this option.
 
 ## A Word About Github Actions
 
