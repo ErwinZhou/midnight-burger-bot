@@ -5,7 +5,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 	BLENDER = /Applications/Blender.app/Contents/MacOS/Blender -y
 else ifeq ($(UNAME_S),Linux)
-	BLENDER = ../../blender-4.5.2-linux-x64/blender -y
+	BLENDER = ../../blender-5.2.1-linux-x64/blender -y
 else
 	BLENDER = blender
 endif
