@@ -16,12 +16,12 @@ EXPORT_SCENE=export-scene.py
 DIST=../dist
 
 all : \
-	$(DIST)/hexapod.pnct \
-	$(DIST)/hexapod.scene \
+	$(DIST)/burger.pnct \
+	$(DIST)/burger.scene \
 
 
-$(DIST)/hexapod.scene : hexapod.blend $(EXPORT_SCENE)
+$(DIST)/burger.scene : burger.blend $(EXPORT_SCENE)
 	$(BLENDER) --background --python $(EXPORT_SCENE) -- '$<':Main '$@'
 
-$(DIST)/hexapod.pnct : hexapod.blend $(EXPORT_MESHES)
+$(DIST)/burger.pnct : burger.blend $(EXPORT_MESHES)
 	$(BLENDER) --background --python $(EXPORT_MESHES) -- '$<':Main '$@'
