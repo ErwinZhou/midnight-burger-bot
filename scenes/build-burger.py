@@ -273,12 +273,14 @@ append_box(bin_vertices, bin_faces, bin_colors, (-0.60, 0.0, 0.33), (0.10, 1.10,
 append_box(bin_vertices, bin_faces, bin_colors, (0.60, 0.0, 0.33), (0.10, 1.10, 0.56), COLORS["steel"])
 append_box(bin_vertices, bin_faces, bin_colors, (0.0, 0.50, 0.33), (1.10, 0.10, 0.56), COLORS["steel"])
 append_box(bin_vertices, bin_faces, bin_colors, (0.0, -0.50, 0.20), (1.10, 0.10, 0.30), COLORS["steel"])
-bin_mesh_owner = make_object("IngredientBin.1", bin_vertices, bin_faces, bin_colors, location=(-4.0, 1.65, 1.0), parent=counter, bevel=0.025, mesh_name="IngredientBin")
-for index, x in enumerate((-2.4, -0.8, 0.8, 2.4, 4.0), start=2):
+bin_mesh_owner = make_object("IngredientBin.1", bin_vertices, bin_faces, bin_colors, location=(-3.9, 1.25, 1.0), parent=counter, bevel=0.025, mesh_name="IngredientBin")
+ingredient_bins = [bin_mesh_owner]
+for index, x in enumerate((-2.55, -1.2, 0.15, 1.5, 2.85), start=2):
 	obj = bpy.data.objects.new("IngredientBin.%d" % index, bin_mesh_owner.data)
 	MAIN.objects.link(obj)
-	obj.location = (x, 1.65, 1.0)
+	obj.location = (x, 1.25, 1.0)
 	obj.parent = counter
+	ingredient_bins.append(obj)
 
 bot_torso = box_object("BotTorso", (1.60, 0.80, 1.50), COLORS["red"], location=(-5.0, 0.25, 1.0), parent=counter, bevel=0.10)
 head_vertices, head_faces, head_colors = [], [], []
@@ -310,7 +312,7 @@ for x in (-3.1, -2.1, -1.1, -0.1, 0.9, 1.9, 2.9):
 conveyor = make_object("ConveyorBelt", conveyor_vertices, conveyor_faces, conveyor_colors, location=(0.0, 4.15, 0.0), bevel=0.025)
 
 # --- Arm: 8 mesh datablocks, 9 objects, exact pivot-first local geometry. ---
-arm_base = cylinder_object("ArmBase", 0.80, 0.30, COLORS["steel_dark"], location=(-3.8, -0.75, 1.0), parent=counter, bevel=0.035, segments=28)
+arm_base = cylinder_object("ArmBase", 0.80, 0.30, COLORS["steel_dark"], location=(-1.5, -0.75, 1.0), parent=counter, bevel=0.035, segments=28)
 arm_yaw = cylinder_object("ArmYaw", 0.60, 0.60, COLORS["red"], location=(0.0, 0.0, 0.30), parent=arm_base, bevel=0.04, segments=28)
 arm_shoulder = cylinder_object("ArmShoulder", 0.30, 0.70, COLORS["yellow"], location=(0.0, 0.0, 0.57), parent=arm_yaw, axis="Y", bevel=0.03, segments=20)
 arm_upper = cylinder_object("ArmUpper", 0.175, 2.50, COLORS["red"], parent=arm_shoulder, rotation=(0.0, math.radians(28.0), 0.0), bevel=0.025, segments=16)
@@ -328,7 +330,7 @@ finger_right.location = (0.0, 0.13, 0.0)
 finger_right.scale.x = -1.0
 finger_right.parent = gripper_palm
 
-# --- Ingredients: all 10 unique meshes, parked outside the fixed camera view. ---
+# --- Ingredients: six visible supplies plus four optional off-camera prototypes. ---
 ingredient_x = -8.0
 ingredient_y = -7.0
 ingredient_step = 1.55
@@ -356,7 +358,7 @@ ingredients.append(profile_object("BunTop", [(0.0, 0.50), (0.08, 0.55), (0.24, 0
 ingredients.append(profile_object("TomatoSlice", [(0.0, 0.43), (0.02, 0.48), (0.08, 0.48), (0.10, 0.43)], COLORS["tomato"], location=(ingredient_x + 5 * ingredient_step, ingredient_y, 0.0), accent=COLORS["tomato_light"], segments=28))
 
 onion_vertices, onion_faces, onion_colors = [], [], []
-append_torus(onion_vertices, onion_faces, onion_colors, 0.34, 0.105, 0.105, COLORS["onion"], major_segments=28, minor_segments=8)
+append_torus(onion_vertices, onion_faces, onion_colors, 0.41, 0.04, 0.04, COLORS["onion"], major_segments=28, minor_segments=8)
 ingredients.append(make_object("OnionRing", onion_vertices, onion_faces, onion_colors, location=(ingredient_x + 6 * ingredient_step, ingredient_y, 0.0), bevel=0.0))
 
 pickle_vertices, pickle_faces, pickle_colors = [], [], []
@@ -383,6 +385,25 @@ for index in range(segments):
 	bacon_colors.extend([COLORS["bacon"], stripe, COLORS["bacon"], COLORS["bacon"]])
 ingredients.append(make_object("BaconStrip", bacon_vertices, bacon_faces, bacon_colors, location=(ingredient_x + 8 * ingredient_step, ingredient_y, 0.0), bevel=0.01))
 ingredients.append(profile_object("SauceBlob", [(0.0, 0.34), (0.02, 0.40), (0.06, 0.36)], COLORS["sauce"], location=(ingredient_x + 9 * ingredient_step, ingredient_y, 0.0), wave=0.035, frequency=7, segments=28))
+
+# The six numbered bins display the six ingredients used by the core game.
+# Their mesh-local undersides remain at z=0; this transform simply rests each
+# supply slightly above its bin floor. Optional ingredients remain off camera.
+bin_supplies = (
+	ingredients[0], # BunBottom
+	ingredients[1], # Patty
+	ingredients[2], # Lettuce
+	ingredients[3], # CheeseSlice
+	ingredients[5], # TomatoSlice
+	ingredients[4], # BunTop
+)
+for ingredient, ingredient_bin in zip(bin_supplies, ingredient_bins):
+	ingredient.parent = ingredient_bin
+	ingredient.location = (0.0, 0.0, 0.12)
+	if ingredient.name == "CheeseSlice":
+		# The full-size cheese intentionally overhangs a burger, so only its
+		# static bin-display instance is scaled to fit inside the bin walls.
+		ingredient.scale = (0.72, 0.72, 1.0)
 
 # One fixed camera; no lights.
 camera_data = bpy.data.cameras.new("Camera")
@@ -431,7 +452,7 @@ bpy.context.view_layer.objects.active = counter
 bpy.ops.wm.save_as_mainfile(filepath=BLEND_PATH)
 bpy.ops.render.render(write_still=True)
 
-# A second render exposes the ten parked ingredient meshes for visual QA while
+# A second render exposes all ten ingredient meshes for visual QA while
 # leaving the saved runtime camera untouched.
 saved_camera_location = camera.location.copy()
 saved_camera_rotation = camera.rotation_euler.copy()
@@ -441,6 +462,11 @@ for obj in MAIN.objects:
 	if obj not in ingredients and obj not in {camera, floor}:
 		hidden_for_ingredient_preview.append((obj, obj.hide_render))
 		obj.hide_render = True
+saved_ingredient_matrices = [obj.matrix_world.copy() for obj in ingredients]
+saved_ingredient_parents = [obj.parent for obj in ingredients]
+for index, obj in enumerate(ingredients):
+	obj.parent = None
+	obj.location = (ingredient_x + index * ingredient_step, ingredient_y, 0.0)
 camera.location = (-1.0, -20.0, 5.8)
 camera.data.lens = 30.0
 look_at(camera, (-1.0, -7.0, 0.20))
@@ -448,6 +474,9 @@ scene.render.filepath = INGREDIENT_PREVIEW_PATH
 bpy.ops.render.render(write_still=True)
 for obj, previous_hide_render in hidden_for_ingredient_preview:
 	obj.hide_render = previous_hide_render
+for obj, parent, matrix_world in zip(ingredients, saved_ingredient_parents, saved_ingredient_matrices):
+	obj.parent = parent
+	obj.matrix_world = matrix_world
 camera.location = saved_camera_location
 camera.rotation_euler = saved_camera_rotation
 camera.data.lens = saved_camera_lens

@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 
 	//create window:
 	Mode::window = SDL_CreateWindow(
-		"gp26 game2: enter the matr... virtual world", //TODO: remember to set a title for your game!
+		"Midnight Burger Bot",
 		1280, 720, //TODO: modify window size if you'd like
 		SDL_WINDOW_OPENGL
 		| SDL_WINDOW_RESIZABLE //uncomment to allow resizing

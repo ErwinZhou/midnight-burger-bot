@@ -7,7 +7,7 @@ all : \
     $(DIST)/burger.scene \
 
 $(DIST)/burger.scene : burger.blend export-scene.py
-    $(BLENDER) --background --python export-scene.py -- "burger.blend:Main" "$(DIST)/burger.scene"
+	$(BLENDER) --background --python export-scene.py -- "burger.blend:Main" "$(DIST)/burger.scene"
 
 $(DIST)/burger.pnct : burger.blend export-meshes.py
-    $(BLENDER) --background --python export-meshes.py -- "burger.blend:Main" "$(DIST)/burger.pnct" 
+	$(BLENDER) --background --python export-meshes.py -- "burger.blend:Main" "$(DIST)/burger.pnct"

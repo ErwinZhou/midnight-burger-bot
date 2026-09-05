@@ -1,4 +1,4 @@
-"""Run both course exporters from an interactive Blender session."""
+"""Run both Burger Bot exporters from an interactive Blender session."""
 
 import os
 import sys

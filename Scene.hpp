@@ -36,6 +36,7 @@ struct Scene {
 		Transform *parent = nullptr;
 
 		//It is often convenient to construct matrices representing this transformation:
+		// Name "A_from_B" : M(world<-local) * U local -> we know that the output is the "world"
 		// ..relative to its parent:
 		glm::mat4x3 make_parent_from_local() const;
 		glm::mat4x3 make_local_from_parent() const;

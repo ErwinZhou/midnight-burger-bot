@@ -34,6 +34,12 @@ EXPECTED_PARENTS = {
 	"IngredientBin.4": "Counter",
 	"IngredientBin.5": "Counter",
 	"IngredientBin.6": "Counter",
+	"BunBottom": "IngredientBin.1",
+	"Patty": "IngredientBin.2",
+	"Lettuce": "IngredientBin.3",
+	"CheeseSlice": "IngredientBin.4",
+	"TomatoSlice": "IngredientBin.5",
+	"BunTop": "IngredientBin.6",
 	"BotTorso": "Counter",
 	"BotHead": "BotTorso",
 	"Tray": "Counter",
@@ -97,15 +103,19 @@ assert set(mesh_ranges) == EXPECTED_MESHES, {
 for name, (begin, end) in mesh_ranges.items():
 	colors = set()
 	min_z = math.inf
+	max_z = -math.inf
 	for vertex_index in range(begin, end):
 		offset = vertex_index * 36
 		position_normal = struct.unpack_from("<6f", pnct["pnct"], offset)
 		assert all(math.isfinite(value) for value in position_normal)
 		min_z = min(min_z, position_normal[2])
+		max_z = max(max_z, position_normal[2])
 		colors.add(tuple(pnct["pnct"][offset + 24:offset + 28]))
 	assert colors != {(255, 255, 255, 255)}, "%s exported white" % name
 	if name in INGREDIENTS:
 		assert abs(min_z) <= 0.0001, "%s underside is at %.6f, expected 0" % (name, min_z)
+	if name == "OnionRing":
+		assert abs((max_z - min_z) - 0.08) <= 0.0001, "OnionRing thickness is %.6f, expected 0.08" % (max_z - min_z)
 
 scene = read_chunks(SCENE_PATH)
 assert set(scene) == {"str0", "xfh0", "msh0", "cam0", "lmp0"}
@@ -136,6 +146,27 @@ parent_names = {
 }
 for child, parent in EXPECTED_PARENTS.items():
 	assert parent_names[child] == parent, "%s parent is %r, expected %r" % (child, parent_names[child], parent)
+
+transforms_by_name = {entry["name"]: entry for entry in transforms}
+arm_position = transforms_by_name["ArmBase"]["position"]
+for target_name in (
+	"IngredientBin.1", "IngredientBin.2", "IngredientBin.3",
+	"IngredientBin.4", "IngredientBin.5", "IngredientBin.6", "Plate",
+):
+	target_position = transforms_by_name[target_name]["position"]
+	horizontal_distance = math.hypot(
+		target_position[0] - arm_position[0],
+		target_position[1] - arm_position[1],
+	)
+	assert horizontal_distance <= 5.0, "%s is %.3f units from ArmBase, beyond the 5.0-unit work envelope" % (target_name, horizontal_distance)
+
+for ingredient_name in ("BunBottom", "Patty", "Lettuce", "CheeseSlice", "TomatoSlice", "BunTop"):
+	position = transforms_by_name[ingredient_name]["position"]
+	assert abs(position[0]) <= 0.0001 and abs(position[1]) <= 0.0001
+	assert abs(position[2] - 0.12) <= 0.0001
+
+cheese_display_scale = transforms_by_name["CheeseSlice"]["scale"]
+assert all(abs(cheese_display_scale[index] - expected) <= 0.0001 for index, expected in enumerate((0.72, 0.72, 1.0)))
 
 scene_meshes = []
 for offset in range(0, len(scene["msh0"]), 12):

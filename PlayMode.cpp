@@ -12,23 +12,23 @@
 
 #include <random>
 
-GLuint hexapod_meshes_for_lit_color_texture_program = 0;
-Load< MeshBuffer > hexapod_meshes(LoadTagDefault, []() -> MeshBuffer const * {
-	MeshBuffer const *ret = new MeshBuffer(data_path("hexapod.pnct"));
-	hexapod_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
+GLuint burger_meshes_for_lit_color_texture_program = 0;
+Load< MeshBuffer > burger_meshes(LoadTagDefault, []() -> MeshBuffer const * {
+	MeshBuffer const *ret = new MeshBuffer(data_path("burger.pnct"));
+	burger_meshes_for_lit_color_texture_program = ret->make_vao_for_program(lit_color_texture_program->program);
 	return ret;
 });
 
-Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
-	return new Scene(data_path("hexapod.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
-		Mesh const &mesh = hexapod_meshes->lookup(mesh_name);
+Load< Scene > burger_scene(LoadTagDefault, []() -> Scene const * {
+	return new Scene(data_path("burger.scene"), [&](Scene &scene, Scene::Transform *transform, std::string const &mesh_name){
+		Mesh const &mesh = burger_meshes->lookup(mesh_name);
 
 		scene.drawables.emplace_back(transform);
 		Scene::Drawable &drawable = scene.drawables.back();
 
 		drawable.pipeline = lit_color_texture_program_pipeline;
 
-		drawable.pipeline.vao = hexapod_meshes_for_lit_color_texture_program;
+		drawable.pipeline.vao = burger_meshes_for_lit_color_texture_program;
 		drawable.pipeline.type = mesh.type;
 		drawable.pipeline.start = mesh.start;
 		drawable.pipeline.count = mesh.count;
@@ -36,20 +36,20 @@ Load< Scene > hexapod_scene(LoadTagDefault, []() -> Scene const * {
 	});
 });
 
-PlayMode::PlayMode() : scene(*hexapod_scene) {
-	//get pointers to leg for convenience:
+PlayMode::PlayMode() : scene(*burger_scene) {
+	//get pointers to arm joints for animation:
 	for (auto &transform : scene.transforms) {
-		if (transform.name == "Hip.FL") hip = &transform;
-		else if (transform.name == "UpperLeg.FL") upper_leg = &transform;
-		else if (transform.name == "LowerLeg.FL") lower_leg = &transform;
+		if (transform.name == "ArmYaw") arm_yaw = &transform;
+		else if (transform.name == "ArmShoulder") arm_shoulder = &transform;
+		else if (transform.name == "ArmForearm") arm_forearm = &transform;
 	}
-	if (hip == nullptr) throw std::runtime_error("Hip not found.");
-	if (upper_leg == nullptr) throw std::runtime_error("Upper leg not found.");
-	if (lower_leg == nullptr) throw std::runtime_error("Lower leg not found.");
+	if (arm_yaw == nullptr) throw std::runtime_error("ArmYaw not found.");
+	if (arm_shoulder == nullptr) throw std::runtime_error("ArmShoulder not found.");
+	if (arm_forearm == nullptr) throw std::runtime_error("ArmForearm not found.");
 
-	hip_base_rotation = hip->rotation;
-	upper_leg_base_rotation = upper_leg->rotation;
-	lower_leg_base_rotation = lower_leg->rotation;
+	arm_yaw_base_rotation = arm_yaw->rotation;
+	arm_shoulder_base_rotation = arm_shoulder->rotation;
+	arm_forearm_base_rotation = arm_forearm->rotation;
 
 	//get pointer to camera for convenience:
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
@@ -125,17 +125,17 @@ void PlayMode::update(float elapsed) {
 	wobble += elapsed / 10.0f;
 	wobble -= std::floor(wobble);
 
-	hip->rotation = hip_base_rotation * glm::angleAxis(
+	arm_yaw->rotation = arm_yaw_base_rotation * glm::angleAxis(
 		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
+		glm::vec3(0.0f, 0.0f, 1.0f)
+	);
+	arm_shoulder->rotation = arm_shoulder_base_rotation * glm::angleAxis(
+		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
 		glm::vec3(0.0f, 1.0f, 0.0f)
 	);
-	upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
+	arm_forearm->rotation = arm_forearm_base_rotation * glm::angleAxis(
 		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
+		glm::vec3(0.0f, 1.0f, 0.0f)
 	);
 
 	//move camera:
