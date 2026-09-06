@@ -10,11 +10,11 @@ Screen Shot:
 
 How To Play:
 
-The Step 2 build uses a fixed camera. Press **1–6** to select a bin position (its ingredient changes at runtime), **Enter** to pick, **R** to restart with a fresh order, and **Escape** to quit. No mouse is required. The green order board shows the recipe in numbered assembly order, with the next layer highlighted. There are no bin numbers, selection outlines, or ingredient-name overlays; slots run left to right. Step 3 will move the arm above a selected bin, then lower the gripper when Enter is pressed.
+The Step 3 build uses a fixed camera. Press **1–6** to select a bin position (its ingredient changes at runtime), **Enter** to pick, **R** to restart with a fresh order, and **Escape** to quit. No mouse is required. The green order board shows the recipe in numbered assembly order, with the next layer highlighted. There are no bin numbers, selection outlines, or ingredient-name overlays; slots run left to right. Selecting a slot moves the arm above it; once it stops, Enter lowers the gripper to pick. Input is locked during movement, while R and Escape remain available.
 
-Orders contain 3–10 layers and may repeat fillings. Picks currently place ingredients immediately, then advance supplies after a short feedback pause. A wrong pick clears the stack and restarts the same recipe; completing an order starts a new one. Mechanical-arm movement, conveyor sliding, score, and timer are planned for subsequent steps. The arm is stationary in this build.
+Orders contain 3–10 layers and may repeat fillings. The arm descends, closes its fingers, lifts and carries the ingredient to the plate, then releases it at the current stack height. Supplies currently update after the movement and feedback finish. A wrong pick clears the stack and restarts the same recipe; completing an order starts a new one. Conveyor sliding, score, and timer are planned for subsequent steps. The arm base and discard bin are positioned at runtime within the arm's reach.
 
-Build with `node Maekfile.js -q`. Run logic tests with `node Maekfile.js -q :test-logic`. To check the scene integration, build `node Maekfile.js -q dist/play-mode-test`, then run `./dist/play-mode-test objs/step2.png` (requires an OpenGL-capable desktop session; Windows executable has an `.exe` suffix).
+Build with `node Maekfile.js -q`. Run logic tests with `node Maekfile.js -q :test-logic`. To check the scene integration, build `node Maekfile.js -q dist/play-mode-test`, then run `./dist/play-mode-test objs/step3` (requires an OpenGL-capable desktop session; Windows executable has an `.exe` suffix).
 
 Asset Pipeline:
 

@@ -19,12 +19,12 @@ struct PlayMode : Mode {
 
 	//----- game state -----
 
-	enum class Phase { Ready, Feedback };
+	enum class Phase { Ready, Selecting, Hovering, Descending, Closing, Lifting,
+		Transporting, Approaching, Placing, Opening, Retreating, Feedback };
 	Phase phase = Phase::Ready;
 	int selected_slot = -1;
-	float feedback_time = 0.0f;
 
-	//local copy of the game scene (so code can change it during gameplay):
+	//local copy of the game scene:
 	Scene scene;
 	std::vector<Scene::Transform *> bin_transforms;
 	burger::BurgerLogic game;
@@ -52,17 +52,37 @@ struct PlayMode : Mode {
 	void sync_supplies();
 	void clear_stack();
 	void restart_game();
-	void pick_selected(); // Immediate placement until Step 3 supplies animation.
+	void pick_selected();
+	void select_slot(size_t slot);
+	void move_arm(glm::vec3 const &target, Phase next_phase, float duration);
+	glm::vec3 angles_for(glm::vec3 const &target) const;
+	void apply_arm(glm::vec3 const &angles);
+	glm::vec3 tool_position() const;
+	glm::vec3 supply_target(size_t slot) const;
+	void release_ingredient();
+	void finish_phase();
+	void set_fingers(float closed);
+	Scene::Transform *arm_wrist = nullptr;
+	Scene::Transform *gripper = nullptr;
+	Scene::Transform *finger_left = nullptr;
+	Scene::Transform *finger_right = nullptr;
+	Scene::Transform *trash = nullptr;
+	glm::vec3 finger_left_home{}, finger_right_home{};
+	glm::vec3 arm_angles{}, move_from{}, move_to{};
+	glm::vec3 pickup{}, destination{}, travel_center{};
+	float move_time = 0.0f, move_duration = 1.0f;
+	float upper_length = 0.0f, lower_length = 0.0f;
+	float upper_rest_angle = 0.0f;
+	bool carrying = false;
+	bool released = false;
+	glm::vec3 const tool_local = glm::vec3(0.0f, 0.0f, -0.40f);
 
-	//burger-bot arm joints to animate:
+	//burger-bot arm joints to animate
 	Scene::Transform *arm_yaw = nullptr;
 	Scene::Transform *arm_shoulder = nullptr;
 	Scene::Transform *arm_forearm = nullptr;
-	glm::quat arm_yaw_base_rotation;
-	glm::quat arm_shoulder_base_rotation;
-	glm::quat arm_forearm_base_rotation;
 	
-	//camera:
+	//camera
 	Scene::Camera *camera = nullptr;
 
 };
