@@ -40,6 +40,7 @@ struct PendingPick {
 	PickOutcome outcome = PickOutcome::Correct;
 	Order next_order;
 	SupplyPlan supply;
+	bool settled = false;
 	bool operator==(PendingPick const &) const = default;
 };
 
@@ -49,6 +50,11 @@ struct BurgerLogic {
 	Order order;
 	Bins bins{};
 	std::optional<PendingPick> pending;
+	float time_left = 180.0f;
+	uint32_t score = 0;
+	void advance_time(float elapsed);
+	bool settle_pick(uint32_t incre_score);
+	bool game_over() const { return time_left <= 0.0f; }
 
 	// Keep seed available for replay
 	explicit BurgerLogic(size_t bin_count, uint32_t initial_seed = std::random_device{}());

@@ -419,6 +419,7 @@ void PlayMode::release_ingredient() {
 	source.drawable->pipeline.count = 0;
 	carrying = false;
 	released = true;
+	game.settle_pick(static_cast<uint32_t>(game.order.layers.size() * 2));
 }
 
 void PlayMode::finish_phase() {
@@ -463,6 +464,10 @@ void PlayMode::finish_phase() {
 		return;
 	case Phase::Placing:
 		release_ingredient();
+		if (game.game_over()) {
+			phase = Phase::GameOver;
+			return;
+		}
 		phase = Phase::Opening;
 		move_time = 0.0f;
 		move_duration = 0.15f;
@@ -511,10 +516,22 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &) {
 
 void PlayMode::update(float elapsed) {
 	// consume leftover time so animation timing does not depend on frame rate
-	while (elapsed > 0.0f && phase != Phase::Ready && phase != Phase::Hovering) {
+	while (elapsed > 0.0f && phase != Phase::GameOver) {
+		if (phase == Phase::Ready || phase == Phase::Hovering) {
+			game.advance_time(elapsed);
+			if (game.game_over()) phase = Phase::GameOver;
+			return;
+		}
 		float step = std::min(elapsed, move_duration-move_time);
+		// expiry wins ties with a release or conveyor commit
+		step = std::min(step, game.time_left);
+		game.advance_time(step);
 		move_time += step;
 		elapsed -= step;
+		if (game.game_over()) {
+			phase = Phase::GameOver;
+			return;
+		}
 		float t = std::clamp(move_time/move_duration, 0.0f, 1.0f);
 		float smooth = t*t*(3.0f-2.0f*t);
 		if (phase == Phase::Sliding) {
@@ -571,6 +588,8 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		};
 		glm::u8vec4 ink(24,48,44,255), done(28,65,46,255), current(255,247,205,255);
 		text("ORDER", -1.14f, 1.80f, 0.19f, ink);
+		text("TIME " + std::to_string(static_cast<int>(std::ceil(game.time_left))) +
+			" / SCORE " + std::to_string(game.score), 0.02f, 1.82f, 0.10f, ink);
 		size_t progress = game.order.next;
 		if (game.pending && released) {
 			progress = game.pending->outcome == burger::PickOutcome::Wrong ? 0 : progress + 1;
@@ -587,6 +606,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "CORRECT");
 		}
 		if (phase == Phase::Hovering) status = "ENTER TO GRAB";
+		if (phase == Phase::GameOver) status = "TIME UP - R TO RESTART";
 		text(status, -1.14f, 0.56f, 0.10f, ink);
 	}
 	{ // right-aligned controls stay outside the order board

@@ -63,6 +63,8 @@ BurgerLogic::BurgerLogic(size_t bin_count, uint32_t initial_seed) : bins(bin_cou
 }
 
 void BurgerLogic::reset_run(uint32_t new_seed) {
+	time_left = 180.0f;
+	score = 0;
 	seed = new_seed;
 	rng.seed(seed);
 	pending.reset();
@@ -73,7 +75,7 @@ void BurgerLogic::reset_run(uint32_t new_seed) {
 
 bool BurgerLogic::begin_pick(size_t slot) {
 	if (slot >= bins.size()) throw std::out_of_range("Pick slot exceeds available bins.");
-	if (pending) return false;
+	if (pending || game_over()) return false;
 	PendingPick pick;
 	pick.slot = slot;
 	pick.ingredient = bins[slot];
@@ -95,7 +97,7 @@ bool BurgerLogic::begin_pick(size_t slot) {
 }
 
 bool BurgerLogic::commit_advance() {
-	if (!pending) return false;
+	if (!pending || game_over()) return false;
 	bins = pending->supply.after;
 	order = std::move(pending->next_order);
 	pending.reset();
@@ -105,6 +107,18 @@ bool BurgerLogic::commit_advance() {
 
 bool BurgerLogic::next_available() const {
 	return std::find(bins.begin(), bins.end(), next_needed()) != bins.end();
+}
+
+void BurgerLogic::advance_time(float elapsed) {
+	if (elapsed > 0.0f) time_left = std::max(0.0f, time_left-elapsed);
+}
+
+bool BurgerLogic::settle_pick(uint32_t incre_score) {
+	if (!pending || pending->settled || game_over()) return false;
+	pending->settled = true;
+	if (pending->outcome == PickOutcome::Completed) score += incre_score;
+	if (pending->outcome == PickOutcome::Wrong) advance_time(5.0f);
+	return true;
 }
 
 } // namespace burger

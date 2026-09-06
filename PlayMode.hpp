@@ -20,7 +20,7 @@ struct PlayMode : Mode {
 	//----- game state -----
 
 	enum class Phase { Ready, Selecting, Hovering, Descending, Closing, Lifting,
-		Transporting, Approaching, Placing, Opening, Retreating, Feedback, Sliding };
+		Transporting, Approaching, Placing, Opening, Retreating, Feedback, Sliding, GameOver };
 	Phase phase = Phase::Ready;
 	int selected_slot = -1;
 
