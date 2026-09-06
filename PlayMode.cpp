@@ -194,6 +194,32 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 		local_from_world[2][0], local_from_world[3][0]);
 	row_bounds = glm::vec2(bin_anchors.front().x-bin_step.x*0.5f,
 		bin_anchors.back().x+bin_step.x*0.5f);
+	{ // reuse the counter mesh for fixed tunnel walls, with cuts hidden inside
+		Mesh const &mesh = burger_meshes->lookup("Counter");
+		Scene::Drawable::Pipeline shell_pipeline;
+		for (auto const &drawable : scene.drawables) {
+			if (drawable.transform->name == "Counter") shell_pipeline = drawable.pipeline;
+		}
+		if (!shell_pipeline.count) throw std::runtime_error("Missing counter mesh for conveyor housings");
+		auto box = [&](std::string const &name, glm::vec3 center, glm::vec3 size) {
+			Instance part = make_instance(bin_transforms[0]->parent, name);
+			part.drawable->pipeline = shell_pipeline;
+			part.transform->scale = size / (mesh.max-mesh.min);
+			part.transform->position = center - (mesh.min+mesh.max)*0.5f*part.transform->scale;
+		};
+		float length = bin_step.x*0.85f;
+		float y = bin_anchors.front().y, floor = bin_anchors.front().z;
+		for (int side : {-1, 1}) {
+			float edge = side < 0 ? row_bounds.x : row_bounds.y;
+			float x = edge + float(side)*length*0.5f;
+			std::string name = side < 0 ? "ConveyorExit" : "ConveyorEntry";
+			box(name+".Roof", glm::vec3(x,y,floor+1.05f), glm::vec3(length,1.50f,0.16f));
+			box(name+".Front", glm::vec3(x,y-0.69f,floor+0.50f), glm::vec3(length,0.12f,1.10f));
+			box(name+".Back", glm::vec3(x,y+0.69f,floor+0.50f), glm::vec3(length,0.12f,1.10f));
+			box(name+".Base", glm::vec3(x,y,floor-0.06f), glm::vec3(length,1.50f,0.12f));
+		}
+		row_bounds += glm::vec2(-length*0.5f,length*0.5f);
+	}
 	slide_starts.resize(bin_pool.size());
 	clear_stack();
 	sync_supplies();
