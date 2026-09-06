@@ -22,6 +22,10 @@ struct LitColorTextureProgram {
 	GLuint LIGHT_FROM_OBJECT_mat4x3 = -1U;
 	GLuint LIGHT_FROM_NORMAL_mat3 = -1U;
 
+	GLuint ROW_CLIP_int = -1U;
+	GLuint ROW_AXIS_vec4 = -1U;
+	GLuint ROW_BOUNDS_vec2 = -1U;
+
 	//lighting:
 	GLuint LIGHT_TYPE_int = -1U;
 	GLuint LIGHT_LOCATION_vec3 = -1U;

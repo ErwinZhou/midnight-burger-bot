@@ -1,4 +1,8 @@
 objs/
+dist/play-mode-test
+dist/play-mode-test.exe
+dist/play-mode-test.pdb
+dist/play-mode-test.ilk
 dist/README-SDL.txt
 dist/README-glm.txt
 dist/README-libpng.txt

@@ -1,0 +1,124 @@
+#include "BurgerLogic.hpp"
+
+#include <algorithm>
+#include <stdexcept>
+
+namespace burger {
+namespace {
+
+constexpr std::array<Ingredient, 10> Ingredients = {
+	Ingredient::BunBottom, Ingredient::Patty, Ingredient::Lettuce,
+	Ingredient::Cheese, Ingredient::BunTop, Ingredient::Tomato,
+	Ingredient::Onion, Ingredient::Pickle, Ingredient::Bacon, Ingredient::Sauce
+};
+constexpr std::array<Ingredient, 8> Fillings = {
+	Ingredient::Patty, Ingredient::Lettuce, Ingredient::Cheese, Ingredient::Tomato,
+	Ingredient::Onion, Ingredient::Pickle, Ingredient::Bacon, Ingredient::Sauce
+};
+
+size_t choose(std::mt19937 &rng, size_t low, size_t high) {
+	return std::uniform_int_distribution<size_t>(low, high)(rng);
+}
+
+} // namespace
+
+Order generate_order(std::mt19937 &rng) {
+	Order order;
+	size_t count = choose(rng, MinLayers, MaxLayers);
+	order.layers.reserve(count);
+	order.layers.push_back(Ingredient::BunBottom);
+	for (size_t i = 1; i + 1 < count; ++i) {
+		order.layers.push_back(Fillings[choose(rng, 0, Fillings.size() - 1)]);
+	}
+	order.layers.push_back(Ingredient::BunTop);
+	return order;
+}
+
+SupplyPlan plan_advance(Bins const &before, size_t k, Ingredient needed, std::mt19937 &rng) {
+	size_t count = before.size();
+	if (k == 0 || k > count) throw std::out_of_range("Supply advance exceeds available bins.");
+	if (std::find(Ingredients.begin(), Ingredients.end(), needed) == Ingredients.end()) {
+		throw std::invalid_argument("Unknown required ingredient.");
+	}
+	SupplyPlan plan;
+	plan.removed = k;
+	plan.after.resize(count);
+	size_t survivors = count - k;
+	bool available = false;
+	for (size_t i = 0; i < survivors; ++i) {
+		plan.after[i] = before[i + k];
+		available = available || plan.after[i] == needed;
+	}
+	// Decide the guaranteed slot before filling any new bin. Never change survivors
+	size_t guaranteed = available ? count : choose(rng, survivors, count - 1);
+	for (size_t i = survivors; i < count; ++i) {
+		plan.after[i] = i == guaranteed ? needed : Ingredients[choose(rng, 0, Ingredients.size() - 1)];
+	}
+	return plan;
+}
+
+BurgerLogic::BurgerLogic(size_t bin_count, uint32_t initial_seed) : bins(bin_count) {
+	if (bin_count == 0) throw std::invalid_argument("Scene must contain at least one ingredient bin.");
+	reset_run(initial_seed);
+}
+
+void BurgerLogic::reset_run(uint32_t new_seed) {
+	time_left = 180.0f;
+	score = 0;
+	seed = new_seed;
+	rng.seed(seed);
+	pending.reset();
+	order = generate_order(rng);
+	bins = plan_advance(bins, bins.size(), next_needed(), rng).after;
+	assert(next_available() && "Initial supplies must contain the next ingredient.");
+}
+
+bool BurgerLogic::begin_pick(size_t slot) {
+	if (slot >= bins.size()) throw std::out_of_range("Pick slot exceeds available bins.");
+	if (pending || game_over()) return false;
+	PendingPick pick;
+	pick.slot = slot;
+	pick.ingredient = bins[slot];
+	pick.next_order = order;
+	if (pick.ingredient != next_needed()) {
+		pick.outcome = PickOutcome::Wrong;
+		pick.next_order.next = 0;
+	} else {
+		++pick.next_order.next;
+		if (pick.next_order.next == pick.next_order.layers.size()) {
+			pick.outcome = PickOutcome::Completed;
+			pick.next_order = generate_order(rng);
+		}
+	}
+	pick.supply = plan_advance(bins, slot + 1,
+		pick.next_order.layers.at(pick.next_order.next), rng);
+	pending = std::move(pick);
+	return true;
+}
+
+bool BurgerLogic::commit_advance() {
+	if (!pending || game_over()) return false;
+	bins = pending->supply.after;
+	order = std::move(pending->next_order);
+	pending.reset();
+	assert(next_available() && "Committed supplies must contain the next ingredient.");
+	return true;
+}
+
+bool BurgerLogic::next_available() const {
+	return std::find(bins.begin(), bins.end(), next_needed()) != bins.end();
+}
+
+void BurgerLogic::advance_time(float elapsed) {
+	if (elapsed > 0.0f) time_left = std::max(0.0f, time_left-elapsed);
+}
+
+bool BurgerLogic::settle_pick(uint32_t incre_score) {
+	if (!pending || pending->settled || game_over()) return false;
+	pending->settled = true;
+	if (pending->outcome == PickOutcome::Completed) score += incre_score;
+	if (pending->outcome == PickOutcome::Wrong) advance_time(5.0f);
+	return true;
+}
+
+} // namespace burger

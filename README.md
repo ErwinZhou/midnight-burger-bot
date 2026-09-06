@@ -10,9 +10,11 @@ Screen Shot:
 
 How To Play:
 
-The current asset-integration build displays the complete Burger Bot work cell and animates all three arm joints. Click the window to capture the mouse, move the mouse to rotate the camera, use **W/A/S/D** to move, and press **Escape** to release the mouse.
+The Step 5 build uses a fixed camera. Press **1–6** to select a bin position (its ingredient changes at runtime), **Enter** to pick, **R** to restart with a fresh order, and **Escape** to quit. No mouse is required. The green order board shows the recipe in numbered assembly order, with the next layer highlighted. There are no bin numbers, selection outlines, or ingredient-name overlays; slots run left to right. Selecting a slot moves the arm above it; once it stops, Enter lowers the gripper to pick. Input is locked during movement, while R and Escape remain available.
 
-The planned gameplay controls are **1–6** to select an ingredient bin, **Space** to run the pick-and-place sequence, and **R** to restart. These gameplay controls, recipe logic, stacking, score, and timer are not implemented yet.
+Orders contain 3–10 layers and may repeat fillings. The arm descends, closes its fingers, lifts and carries the ingredient to the plate, then releases it at the current stack height. After feedback, bins slide left through the picked slot and prepared supplies enter from the right; the next arrangement commits only when sliding finishes. A wrong pick clears the stack and restarts the same recipe; completing an order starts a new one. Each session lasts 60 seconds, including animation time. Completing an order awards 1 point when its last layer is released; a wrong release costs 5 seconds. At zero, GameOver freezes gameplay and the board shows the final score. R starts a fresh 60-second session. Conveyor endpoints have fixed tunnel housings made from the existing counter mesh. Clipping is recessed inside the housings; all six resting slots remain outside them. The arm base and discard bin are positioned at runtime within the arm's reach.
+
+Build with `node Maekfile.js -q`. Run logic tests with `node Maekfile.js -q :test-logic`. To check the scene integration, build `node Maekfile.js -q dist/play-mode-test`, then run `./dist/play-mode-test objs/step5` (requires an OpenGL-capable desktop session; Windows executable has an `.exe` suffix).
 
 Asset Pipeline:
 
@@ -21,3 +23,5 @@ The editable source is `scenes/burger.blend`. From `scenes/`, running `make` inv
 The generated runtime assets are checked into `dist/`, so building or running the game does not require Blender. All Burger Bot geometry and vertex colors were created for this project.
 
 This game was built with [NEST](NEST.md).
+
+See [GAMEPLAY_WALKTHROUGH.md](GAMEPLAY_WALKTHROUGH.md) for the state machine, function responsibilities and complete correct/wrong-pick examples.
