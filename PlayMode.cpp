@@ -7,6 +7,7 @@
 #include "Load.hpp"
 #include "gl_errors.hpp"
 #include "data_path.hpp"
+#include "load_save_png.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -147,7 +148,33 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 	}
 	if (!recipe_board) throw std::runtime_error("RecipeBoard not found.");
 	// more readable orders without changing the source asset
-	recipe_board->scale *= glm::vec3(1.25f, 1.0f, 1.25f);
+	recipe_board->scale = glm::vec3(2.5f, 1.0f, 1.45f);
+	recipe_board->position = glm::vec3(1.25f, 2.35f, 2.2f);
+	std::array<char const *, 10> icon_names = {"BunBottom", "Patty", "Lettuce", "CheeseSlice", "BunTop",
+		"TomatoSlice", "OnionRing", "PickleSlice", "BaconStrip", "SauceBlob"};
+	glGenTextures(icon_textures.size(), icon_textures.data());
+	for (size_t i = 0; i < icon_textures.size(); ++i) {
+		glm::uvec2 size;
+		std::vector<glm::u8vec4> pixels;
+		load_png(data_path(std::string("icons/")+icon_names[i]+".png"), &size, &pixels, LowerLeftOrigin);
+		glBindTexture(GL_TEXTURE_2D, icon_textures[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glGenVertexArrays(1, &icon_vao);
+	glGenBuffers(1, &icon_buffer);
+	glBindVertexArray(icon_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, icon_buffer);
+	glVertexAttribPointer(lit_color_texture_program->Position_vec4, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), nullptr);
+	glEnableVertexAttribArray(lit_color_texture_program->Position_vec4);
+	glVertexAttribPointer(lit_color_texture_program->TexCoord_vec2, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), reinterpret_cast<void *>(3*sizeof(float)));
+	glEnableVertexAttribArray(lit_color_texture_program->TexCoord_vec2);
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	if (!plate) throw std::runtime_error("Plate not found.");
 	plate_height = burger_meshes->lookup("Plate").max.z;
 
@@ -227,6 +254,45 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 }
 
 PlayMode::~PlayMode() {
+	glDeleteTextures(icon_textures.size(), icon_textures.data());
+	glDeleteBuffers(1, &icon_buffer);
+	glDeleteVertexArrays(1, &icon_vao);
+}
+
+void PlayMode::draw_order_icons(glm::mat4 const &clip_from_board) {
+	auto const &program = *lit_color_texture_program;
+	glUseProgram(program.program);
+	glUniformMatrix4fv(program.CLIP_FROM_OBJECT_mat4, 1, GL_FALSE, glm::value_ptr(clip_from_board));
+	glUniformMatrix4x3fv(program.LIGHT_FROM_OBJECT_mat4x3, 1, GL_FALSE, glm::value_ptr(glm::mat4x3(1)));
+	glUniformMatrix3fv(program.LIGHT_FROM_NORMAL_mat3, 1, GL_FALSE, glm::value_ptr(glm::mat3(1)));
+	glUniform1i(program.ROW_CLIP_int, 0);
+	glUniform1i(program.LIGHT_TYPE_int, 1);
+	glUniform3f(program.LIGHT_DIRECTION_vec3, 0, 0, 0);
+	glUniform3f(program.LIGHT_ENERGY_vec3, 2, 2, 2);
+	glBindVertexArray(icon_vao);
+	glVertexAttrib4f(program.Color_vec4, 1, 1, 1, 1);
+	glVertexAttrib3f(program.Normal_vec3, 0, 0, 1);
+	glBindBuffer(GL_ARRAY_BUFFER, icon_buffer);
+	glActiveTexture(GL_TEXTURE0);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	for (size_t i = 0; i < game.order.layers.size(); ++i) {
+		float x = -1.07f + float(i%5)*0.45f;
+		float z = i < 5 ? 1.20f : 0.65f;
+		float w = 0.34f, h = 0.46f, y = -0.12f;
+		float vertices[] = {x,y,z,0,0, x+w,y,z,1,0, x+w,y,z+h,1,1,
+			x,y,z,0,0, x+w,y,z+h,1,1, x,y,z+h,0,1};
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
+		glBindTexture(GL_TEXTURE_2D, icon_textures.at(static_cast<size_t>(game.order.layers[i])));
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+	}
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glUseProgram(0);
 }
 
 void PlayMode::clip_row() {
@@ -581,13 +647,15 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 	{ // order text lies on the green panel, in RecipeBoard local coordinates
 		glm::mat4 clip_from_world = camera->make_projection() * glm::mat4(camera->transform->make_local_from_world());
-		DrawLines lines(clip_from_world * glm::mat4(recipe_board->make_world_from_local()));
+		glm::mat4 clip_from_board = clip_from_world * glm::mat4(recipe_board->make_world_from_local());
+		draw_order_icons(clip_from_board);
+		DrawLines lines(clip_from_board);
 		auto text = [&](std::string const &label, float x, float z, float height, glm::u8vec4 color) {
 			lines.draw_text(label, glm::vec3(x,-0.116f,z), glm::vec3(height,0,0),
 				glm::vec3(0,0,height), color);
 		};
 		glm::u8vec4 ink(24,48,44,255), done(28,65,46,255), current(255,247,205,255);
-		text("ORDER", -1.14f, 1.80f, 0.19f, ink);
+		text("ORDER", -1.08f, 1.80f, 0.16f, ink);
 		text("TIME " + std::to_string(static_cast<int>(std::ceil(game.time_left))) +
 			" / SCORE " + std::to_string(game.score), 0.02f, 1.82f, 0.10f, ink);
 		size_t progress = game.order.next;
@@ -595,11 +663,22 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			progress = game.pending->outcome == burger::PickOutcome::Wrong ? 0 : progress + 1;
 		}
 		for (size_t i = 0; i < game.order.layers.size(); ++i) {
-			std::string label = std::to_string(i+1) + ". " +
-				ingredient_looks.at(static_cast<size_t>(game.order.layers[i])).name;
-			text(label, i < 5 ? -1.14f : 0.08f, 1.56f-float(i%5)*0.19f, 0.16f,
-				i < progress ? done : (i == progress ? current : ink));
+			float x = -1.07f + float(i%5)*0.45f;
+			float z = i < 5 ? 1.20f : 0.65f;
+			auto point = [](float x, float z) { return glm::vec3(x,-0.125f,z); };
+			if (i == progress) {
+				lines.draw(point(x-0.02f,z),point(x+0.36f,z),current);
+				lines.draw(point(x+0.36f,z),point(x+0.36f,z+0.46f),current);
+				lines.draw(point(x+0.36f,z+0.46f),point(x-0.02f,z+0.46f),current);
+				lines.draw(point(x-0.02f,z+0.46f),point(x-0.02f,z),current);
+			}
+			if (i < progress) {
+				lines.draw(point(x+0.23f,z+0.08f),point(x+0.27f,z+0.02f),done);
+				lines.draw(point(x+0.27f,z+0.02f),point(x+0.35f,z+0.18f),done);
+			}
+			if (i+1 < game.order.layers.size() && i%5 != 4) text("+",x+0.37f,z+0.20f,0.10f,ink);
 		}
+		if (game.order.layers.size() > 5) text("CONTINUE BELOW", -1.07f, 1.13f, 0.055f, ink);
 		std::string status;
 		if (released && game.pending) {
 			status = game.pending->outcome == burger::PickOutcome::Wrong ? "WRONG - TRY AGAIN" :
@@ -607,7 +686,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		}
 		if (phase == Phase::Hovering) status = "ENTER TO GRAB";
 		if (phase == Phase::GameOver) status = "TIME UP - R TO RESTART";
-		text(status, -1.14f, 0.56f, 0.10f, ink);
+		text(status, -1.07f, 0.52f, 0.08f, ink);
 	}
 	{ // right-aligned controls stay outside the order board
 		glDisable(GL_DEPTH_TEST);

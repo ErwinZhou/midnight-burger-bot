@@ -48,6 +48,9 @@ struct PlayMode : Mode {
 	float plate_height = 0.0f;
 	Scene::Transform *plate = nullptr;
 	Scene::Transform *recipe_board = nullptr;
+	std::array<GLuint, 10> icon_textures{};
+	GLuint icon_vao = 0, icon_buffer = 0;
+	void draw_order_icons(glm::mat4 const &clip_from_board);
 
 	std::vector<glm::vec3> bin_anchors, slide_starts;
 	Scene::Drawable::Pipeline bin_pipeline;

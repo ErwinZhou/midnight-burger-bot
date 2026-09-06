@@ -1,4 +1,8 @@
 .PHONY : all
+.PHONY : icons
+
+icons :
+	$(BLENDER) --background --python export-icons.py
 
 #n.b. the '-y' sets autoexec scripts to 'on' so that driver expressions will work
 UNAME_S := $(shell uname -s)
