@@ -35,27 +35,30 @@ Order generate_order(std::mt19937 &rng) {
 }
 
 SupplyPlan plan_advance(Bins const &before, size_t k, Ingredient needed, std::mt19937 &rng) {
-	if (k == 0 || k > BinCount) throw std::out_of_range("Supply advance must remove 1..6 bins.");
+	size_t count = before.size();
+	if (k == 0 || k > count) throw std::out_of_range("Supply advance exceeds available bins.");
 	if (std::find(Ingredients.begin(), Ingredients.end(), needed) == Ingredients.end()) {
 		throw std::invalid_argument("Unknown required ingredient.");
 	}
 	SupplyPlan plan;
 	plan.removed = k;
-	size_t survivors = BinCount - k;
+	plan.after.resize(count);
+	size_t survivors = count - k;
 	bool available = false;
 	for (size_t i = 0; i < survivors; ++i) {
 		plan.after[i] = before[i + k];
 		available = available || plan.after[i] == needed;
 	}
 	// Decide the guaranteed slot before filling any new bin. Never change survivors
-	size_t guaranteed = available ? BinCount : choose(rng, survivors, BinCount - 1);
-	for (size_t i = survivors; i < BinCount; ++i) {
+	size_t guaranteed = available ? count : choose(rng, survivors, count - 1);
+	for (size_t i = survivors; i < count; ++i) {
 		plan.after[i] = i == guaranteed ? needed : Ingredients[choose(rng, 0, Ingredients.size() - 1)];
 	}
 	return plan;
 }
 
-BurgerLogic::BurgerLogic(uint32_t initial_seed) {
+BurgerLogic::BurgerLogic(size_t bin_count, uint32_t initial_seed) : bins(bin_count) {
+	if (bin_count == 0) throw std::invalid_argument("Scene must contain at least one ingredient bin.");
 	reset_run(initial_seed);
 }
 
@@ -64,12 +67,12 @@ void BurgerLogic::reset_run(uint32_t new_seed) {
 	rng.seed(seed);
 	pending.reset();
 	order = generate_order(rng);
-	bins = plan_advance(Bins{}, BinCount, next_needed(), rng).after;
+	bins = plan_advance(bins, bins.size(), next_needed(), rng).after;
 	assert(next_available() && "Initial supplies must contain the next ingredient.");
 }
 
 bool BurgerLogic::begin_pick(size_t slot) {
-	if (slot >= BinCount) throw std::out_of_range("Pick slot must be 0..5.");
+	if (slot >= bins.size()) throw std::out_of_range("Pick slot exceeds available bins.");
 	if (pending) return false;
 	PendingPick pick;
 	pick.slot = slot;

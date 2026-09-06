@@ -13,10 +13,9 @@ namespace burger {
 enum class Ingredient : uint8_t {
 	BunBottom, Patty, Lettuce, Cheese, BunTop, Tomato, Onion, Pickle, Bacon, Sauce
 };
-constexpr size_t BinCount = 6;
 constexpr size_t MinLayers = 3;
 constexpr size_t MaxLayers = 10;
-using Bins = std::array<Ingredient, BinCount>;
+using Bins = std::vector<Ingredient>;
 
 struct Order {
 	std::vector<Ingredient> layers;
@@ -26,12 +25,12 @@ struct Order {
 
 struct SupplyPlan {
 	size_t removed = 0;
-	Bins after{}; // survivors first: new supplies occupy [6 - removed, 6)
+	Bins after{}; // survivors first: new supplies occupy [after.size() - removed, after.size())
 	bool operator==(SupplyPlan const &) const = default;
 };
 
 Order generate_order(std::mt19937 &rng);
-// k is a count (1..6) but keyboard/scene slot indices are zero-based
+// k is a count (1..before.size()) but keyboard/scene slot indices are zero-based
 SupplyPlan plan_advance(Bins const &before, size_t k, Ingredient needed, std::mt19937 &rng);
 
 enum class PickOutcome { Correct, Wrong, Completed };
@@ -52,7 +51,7 @@ struct BurgerLogic {
 	std::optional<PendingPick> pending;
 
 	// Keep seed available for replay
-	explicit BurgerLogic(uint32_t initial_seed = std::random_device{}());
+	explicit BurgerLogic(size_t bin_count, uint32_t initial_seed = std::random_device{}());
 	void reset_run(uint32_t new_seed);
 	bool begin_pick(size_t slot);
 	bool commit_advance();

@@ -11,6 +11,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
+#include <algorithm>
 
 GLuint burger_meshes_for_lit_color_texture_program = 0;
 Load< MeshBuffer > burger_meshes(LoadTagDefault, []() -> MeshBuffer const * {
@@ -36,7 +37,33 @@ Load< Scene > burger_scene(LoadTagDefault, []() -> Scene const * {
 	});
 });
 
-PlayMode::PlayMode() : scene(*burger_scene) {
+namespace {
+
+std::vector<Scene::Transform *> find_bins(Scene &scene) {
+	std::vector<Scene::Transform *> bins;
+	for (Scene::Transform &transform : scene.transforms) {
+		if (transform.name.starts_with("IngredientBin.")) bins.push_back(&transform);
+	}
+	// Sort numeric suffixes without assuming scene export order.
+	std::sort(bins.begin(), bins.end(), [](Scene::Transform const *a, Scene::Transform const *b) {
+		if (a->name.size() != b->name.size()) return a->name.size() < b->name.size();
+		return a->name < b->name;
+	});
+	if (bins.empty()) throw std::runtime_error("Scene contains no IngredientBin.N objects.");
+	for (size_t i = 0; i < bins.size(); ++i) {
+		std::string expected = "IngredientBin." + std::to_string(i + 1);
+		if (bins[i]->name != expected) {
+			throw std::runtime_error("Expected " + expected + ", found " + bins[i]->name + ". Bin numbers must be unique and consecutive.");
+		}
+	}
+	// The current input design supports keys 1-6; this is not a supply-logic limit.
+	if (bins.size() != 6) throw std::runtime_error("The six-key controls require 6 scene bins; found " + std::to_string(bins.size()));
+	return bins;
+}
+
+} // namespace
+
+PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), game(bin_transforms.size()) {
 	//get pointers to arm joints for animation:
 	for (auto &transform : scene.transforms) {
 		if (transform.name == "ArmYaw") arm_yaw = &transform;

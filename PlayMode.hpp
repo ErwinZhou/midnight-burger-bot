@@ -1,6 +1,7 @@
 #include "Mode.hpp"
 
 #include "Scene.hpp"
+#include "BurgerLogic.hpp"
 
 #include <glm/glm.hpp>
 
@@ -26,6 +27,8 @@ struct PlayMode : Mode {
 
 	//local copy of the game scene (so code can change it during gameplay):
 	Scene scene;
+	std::vector<Scene::Transform *> bin_transforms;
+	burger::BurgerLogic game;
 
 	//burger-bot arm joints to animate:
 	Scene::Transform *arm_yaw = nullptr;
