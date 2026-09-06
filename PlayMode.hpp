@@ -20,7 +20,7 @@ struct PlayMode : Mode {
 	//----- game state -----
 
 	enum class Phase { Ready, Selecting, Hovering, Descending, Closing, Lifting,
-		Transporting, Approaching, Placing, Opening, Retreating, Feedback };
+		Transporting, Approaching, Placing, Opening, Retreating, Feedback, Sliding };
 	Phase phase = Phase::Ready;
 	int selected_slot = -1;
 
@@ -49,6 +49,15 @@ struct PlayMode : Mode {
 	Scene::Transform *plate = nullptr;
 	Scene::Transform *recipe_board = nullptr;
 
+	std::vector<glm::vec3> bin_anchors, slide_starts;
+	Scene::Drawable::Pipeline bin_pipeline;
+	glm::vec3 bin_step{};
+	glm::vec4 row_axis{};
+	glm::vec2 row_bounds{};
+	void clip_row();
+	void set_supply(size_t index, burger::Ingredient ingredient);
+	void begin_slide();
+	void finish_slide();
 	void sync_supplies();
 	void clear_stack();
 	void restart_game();

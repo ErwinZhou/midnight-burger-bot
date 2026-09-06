@@ -186,6 +186,15 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 			stack_pool[i] = make_instance(plate, "Stack." + std::to_string(i));
 		}
 	}
+	for (auto *bin : bin_transforms) bin_anchors.push_back(bin->position);
+	bin_step = bin_anchors[1] - bin_anchors[0];
+	bin_pipeline = bin_pool[0].drawable->pipeline;
+	glm::mat4 local_from_world(bin_transforms[0]->parent->make_local_from_world());
+	row_axis = glm::vec4(local_from_world[0][0], local_from_world[1][0],
+		local_from_world[2][0], local_from_world[3][0]);
+	row_bounds = glm::vec2(bin_anchors.front().x-bin_step.x*0.5f,
+		bin_anchors.back().x+bin_step.x*0.5f);
+	slide_starts.resize(bin_pool.size());
 	clear_stack();
 	sync_supplies();
 	std::cout << "Burger seed: " << game.seed << std::endl;
@@ -194,23 +203,81 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 PlayMode::~PlayMode() {
 }
 
+void PlayMode::clip_row() {
+	glUniform1i(lit_color_texture_program->ROW_CLIP_int, 1);
+	glUniform4fv(lit_color_texture_program->ROW_AXIS_vec4, 1, glm::value_ptr(row_axis));
+	glUniform2fv(lit_color_texture_program->ROW_BOUNDS_vec2, 1, glm::value_ptr(row_bounds));
+}
+
+void PlayMode::set_supply(size_t index, burger::Ingredient ingredient) {
+	Instance &instance = supply_pool.at(index);
+	IngredientLook const &look = ingredient_looks.at(static_cast<size_t>(ingredient));
+	instance.drawable->pipeline = look.pipeline;
+	instance.drawable->pipeline.set_uniforms = [this]() { clip_row(); };
+	instance.transform->parent = bin_pool[index].transform;
+	instance.transform->rotation = glm::quat(1,0,0,0);
+	instance.transform->scale = look.bin_scale;
+	glm::vec3 center = 0.5f * (look.min + look.max);
+	instance.transform->position = glm::vec3(-center.x * look.bin_scale.x,
+		-center.y * look.bin_scale.y, 0.12f - look.min.z * look.bin_scale.z);
+}
+
 void PlayMode::sync_supplies() {
 	assert(game.bins.size() == bin_transforms.size());
-	for (size_t i = 0; i < supply_pool.size(); ++i) {
-		Instance &instance = supply_pool[i];
+	for (size_t i = 0; i < bin_pool.size(); ++i) {
+		bin_pool[i].drawable->pipeline = bin_pipeline;
+		bin_pool[i].drawable->pipeline.set_uniforms = [this]() { clip_row(); };
+		supply_pool[i].transform->parent = bin_pool[i].transform;
 		if (i >= game.bins.size()) {
-			instance.drawable->pipeline.count = 0;
+			bin_pool[i].drawable->pipeline.count = 0;
+			supply_pool[i].drawable->pipeline.count = 0;
 			continue;
 		}
-		IngredientLook const &look = ingredient_looks.at(static_cast<size_t>(game.bins[i]));
-		instance.drawable->pipeline = look.pipeline;
-		instance.transform->parent = bin_pool[i].transform;
-		instance.transform->rotation = glm::quat(1,0,0,0);
-		instance.transform->scale = look.bin_scale;
-		glm::vec3 center = 0.5f * (look.min + look.max);
-		instance.transform->position = glm::vec3(-center.x * look.bin_scale.x,
-			-center.y * look.bin_scale.y, 0.12f - look.min.z * look.bin_scale.z);
+		bin_pool[i].transform->position = bin_anchors[i];
+		bin_transforms[i] = bin_pool[i].transform;
+		set_supply(i, game.bins[i]);
 	}
+}
+
+void PlayMode::begin_slide() {
+	assert(game.pending);
+	size_t n = game.bins.size(), k = game.pending->supply.removed;
+	// incoming food is finalized while still outside the visible row
+	for (size_t j = 0; j < k; ++j) {
+		size_t i = n+j;
+		bin_pool[i].transform->position = bin_anchors.back() + float(j+1)*bin_step;
+		bin_pool[i].drawable->pipeline = bin_pipeline;
+		bin_pool[i].drawable->pipeline.set_uniforms = [this]() { clip_row(); };
+		set_supply(i, game.pending->supply.after[n-k+j]);
+	}
+	for (size_t i = 0; i < n+k; ++i) slide_starts[i] = bin_pool[i].transform->position;
+	phase = Phase::Sliding;
+	move_time = 0.0f;
+	move_duration = 0.45f + 0.25f*float(k);
+}
+
+void PlayMode::finish_slide() {
+	size_t n = game.bins.size(), k = game.pending->supply.removed;
+	// preserve each surviving bin and its food instead of repainting slots
+	std::rotate(bin_pool.begin(), bin_pool.begin()+k, bin_pool.begin()+n+k);
+	std::rotate(supply_pool.begin(), supply_pool.begin()+k, supply_pool.begin()+n+k);
+	for (size_t i = 0; i < bin_pool.size(); ++i) {
+		if (i < n) {
+			bin_pool[i].transform->position = bin_anchors[i];
+			bin_transforms[i] = bin_pool[i].transform;
+		} else {
+			bin_pool[i].drawable->pipeline.count = 0;
+			supply_pool[i].drawable->pipeline.count = 0;
+			supply_pool[i].transform->parent = bin_pool[i].transform;
+		}
+	}
+	if (game.pending->outcome == burger::PickOutcome::Completed) clear_stack();
+	bool committed = game.commit_advance();
+	assert(committed);
+	(void)committed;
+	selected_slot = -1;
+	released = false;
+	phase = Phase::Ready;
 }
 
 void PlayMode::clear_stack() {
@@ -350,6 +417,7 @@ void PlayMode::finish_phase() {
 			glm::vec3(local[1])/source.transform->scale.y,
 			glm::vec3(local[2])/source.transform->scale.z));
 		source.transform->parent = gripper;
+		source.drawable->pipeline.set_uniforms = ingredient_looks.at(static_cast<size_t>(game.pending->ingredient)).pipeline.set_uniforms;
 		carrying = true;
 		glm::vec3 hover = pickup;
 		hover.z = 2.7f;
@@ -381,17 +449,12 @@ void PlayMode::finish_phase() {
 		move_time = 0.0f;
 		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.6f : 0.2f;
 		return;
-	case Phase::Feedback: {
-		if (game.pending->outcome == burger::PickOutcome::Completed) clear_stack();
-		bool committed = game.commit_advance();
-		assert(committed);
-		(void)committed;
-		sync_supplies();
-		selected_slot = -1;
-		released = false;
-		phase = Phase::Ready;
+	case Phase::Feedback:
+		begin_slide();
 		return;
-	}
+	case Phase::Sliding:
+		finish_slide();
+		return;
 	default: return;
 	}
 }
@@ -428,7 +491,13 @@ void PlayMode::update(float elapsed) {
 		elapsed -= step;
 		float t = std::clamp(move_time/move_duration, 0.0f, 1.0f);
 		float smooth = t*t*(3.0f-2.0f*t);
-		if (phase == Phase::Closing) set_fingers(smooth);
+		if (phase == Phase::Sliding) {
+			size_t k = game.pending->supply.removed;
+			for (size_t i = 0; i < game.bins.size()+k; ++i) {
+				bin_pool[i].transform->position = slide_starts[i] - float(k)*bin_step*smooth;
+			}
+		}
+		else if (phase == Phase::Closing) set_fingers(smooth);
 		else if (phase == Phase::Opening) set_fingers(1.0f-smooth);
 		else if (phase != Phase::Feedback) apply_arm(glm::mix(move_from, move_to, smooth));
 		if (phase == Phase::Transporting && carrying) {

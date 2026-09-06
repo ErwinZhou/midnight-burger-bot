@@ -15,6 +15,10 @@ Load< LitColorTextureProgram > lit_color_texture_program(LoadTagEarly, []() -> L
 	lit_color_texture_program_pipeline.LIGHT_FROM_OBJECT_mat4x3 = ret->LIGHT_FROM_OBJECT_mat4x3;
 	lit_color_texture_program_pipeline.LIGHT_FROM_NORMAL_mat3 = ret->LIGHT_FROM_NORMAL_mat3;
 
+	lit_color_texture_program_pipeline.set_uniforms = [ret]() {
+		glUniform1i(ret->ROW_CLIP_int, 0);
+	};
+
 	/* This will be used later if/when we build a light loop into the Scene:
 	lit_color_texture_program_pipeline.LIGHT_TYPE_int = ret->LIGHT_TYPE_int;
 	lit_color_texture_program_pipeline.LIGHT_LOCATION_vec3 = ret->LIGHT_LOCATION_vec3;
@@ -70,6 +74,9 @@ LitColorTextureProgram::LitColorTextureProgram() {
 		//fragment shader:
 		"#version 330\n"
 		"uniform sampler2D TEX;\n"
+		"uniform bool ROW_CLIP;\n"
+		"uniform vec4 ROW_AXIS;\n"
+		"uniform vec2 ROW_BOUNDS;\n"
 		"uniform int LIGHT_TYPE;\n"
 		"uniform vec3 LIGHT_LOCATION;\n"
 		"uniform vec3 LIGHT_DIRECTION;\n"
@@ -84,6 +91,8 @@ LitColorTextureProgram::LitColorTextureProgram() {
 		"	return fract(sin(dot(st, vec2(12.9898, 78.233)))*43758.5453123);\n"
 		"}\n"
 		"void main() {\n"
+		"	float row_x = dot(ROW_AXIS, vec4(position, 1.0));\n"
+		"	if (ROW_CLIP && (row_x < ROW_BOUNDS.x || row_x > ROW_BOUNDS.y)) discard;\n"
 		"	vec3 n = normalize(normal);\n"
 		"	vec3 e;\n"
 		"	if (LIGHT_TYPE == 0) { //point light \n"
@@ -136,6 +145,9 @@ LitColorTextureProgram::LitColorTextureProgram() {
 	LIGHT_FROM_OBJECT_mat4x3 = glGetUniformLocation(program, "LIGHT_FROM_OBJECT");
 	LIGHT_FROM_NORMAL_mat3 = glGetUniformLocation(program, "LIGHT_FROM_NORMAL");
 
+	ROW_CLIP_int = glGetUniformLocation(program, "ROW_CLIP");
+	ROW_AXIS_vec4 = glGetUniformLocation(program, "ROW_AXIS");
+	ROW_BOUNDS_vec2 = glGetUniformLocation(program, "ROW_BOUNDS");
 	LIGHT_TYPE_int = glGetUniformLocation(program, "LIGHT_TYPE");
 	LIGHT_LOCATION_vec3 = glGetUniformLocation(program, "LIGHT_LOCATION");
 	LIGHT_DIRECTION_vec3 = glGetUniformLocation(program, "LIGHT_DIRECTION");
@@ -157,4 +169,3 @@ LitColorTextureProgram::~LitColorTextureProgram() {
 	glDeleteProgram(program);
 	program = 0;
 }
-
