@@ -10,9 +10,11 @@ Screen Shot:
 
 How To Play:
 
-The current asset-integration build displays the complete Burger Bot work cell and animates all three arm joints. Click the window to capture the mouse, move the mouse to rotate the camera, use **W/A/S/D** to move, and press **Escape** to release the mouse.
+The Step 2 build uses a fixed camera. Press **1–6** to select a bin position (its ingredient changes at runtime), **Enter** to pick, **R** to restart with a fresh order, and **Escape** to quit. No mouse is required. The green order board shows the recipe in numbered assembly order, with the next layer highlighted. There are no bin numbers, selection outlines, or ingredient-name overlays; slots run left to right. Step 3 will move the arm above a selected bin, then lower the gripper when Enter is pressed.
 
-The planned gameplay controls are **1–6** to select an ingredient bin, **Space** to run the pick-and-place sequence, and **R** to restart. These gameplay controls, recipe logic, stacking, score, and timer are not implemented yet.
+Orders contain 3–10 layers and may repeat fillings. Picks currently place ingredients immediately, then advance supplies after a short feedback pause. A wrong pick clears the stack and restarts the same recipe; completing an order starts a new one. Mechanical-arm movement, conveyor sliding, score, and timer are planned for subsequent steps. The arm is stationary in this build.
+
+Build with `node Maekfile.js -q`. Run logic tests with `node Maekfile.js -q :test-logic`. To check the scene integration, build `node Maekfile.js -q dist/play-mode-test`, then run `./dist/play-mode-test objs/step2.png` (requires an OpenGL-capable desktop session; Windows executable has an `.exe` suffix).
 
 Asset Pipeline:
 

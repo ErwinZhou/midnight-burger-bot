@@ -12,6 +12,7 @@
 
 #include <random>
 #include <algorithm>
+#include <iostream>
 
 GLuint burger_meshes_for_lit_color_texture_program = 0;
 Load< MeshBuffer > burger_meshes(LoadTagDefault, []() -> MeshBuffer const * {
@@ -80,118 +81,192 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 
 	//get pointer to camera for convenience:
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
+
 	camera = &scene.cameras.front();
+	SDL_SetWindowRelativeMouseMode(Mode::window, false);
+
+	{ // Cache the original ingredient appearances before hiding their drawables.
+		constexpr std::array<char const *, 10> meshes = {
+			"BunBottom", "Patty", "Lettuce", "CheeseSlice", "BunTop",
+			"TomatoSlice", "OnionRing", "PickleSlice", "BaconStrip", "SauceBlob"
+		};
+		constexpr std::array<char const *, 10> names = {
+			"BOTTOM BUN", "PATTY", "LETTUCE", "CHEESE", "TOP BUN",
+			"TOMATO", "ONION", "PICKLE", "BACON", "SAUCE"
+		};
+		for (size_t i = 0; i < meshes.size(); ++i) {
+			Scene::Drawable *prototype = nullptr;
+			for (Scene::Drawable &drawable : scene.drawables) {
+				if (drawable.transform->name == meshes[i]) prototype = &drawable;
+			}
+			if (!prototype) throw std::runtime_error(std::string("Missing ingredient drawable: ") + meshes[i]);
+			Mesh const &mesh = burger_meshes->lookup(meshes[i]);
+			IngredientLook &look = ingredient_looks[i];
+			look.name = names[i];
+			look.pipeline = prototype->pipeline;
+			look.min = mesh.min;
+			look.max = mesh.max;
+			glm::vec3 extent = mesh.max - mesh.min;
+			if (!(extent.x > 0 && extent.y > 0 && extent.z > 0)) {
+				throw std::runtime_error(std::string("Invalid ingredient bounds: ") + meshes[i]);
+			}
+			// Interior width/depth, with clearance from the walls.
+			float fit = std::min(1.0f, std::min(1.04f / extent.x, 0.84f / extent.y));
+			look.bin_scale = glm::vec3(fit, fit, 1.0f);
+			look.grab_offset = glm::vec3(0.0f, 0.0f, mesh.max.z);
+			prototype->pipeline.count = 0;
+		}
+	}
+
+	for (Scene::Transform &transform : scene.transforms) {
+		if (transform.name == "Plate") plate = &transform;
+		if (transform.name == "RecipeBoard") recipe_board = &transform;
+	}
+	if (!recipe_board) throw std::runtime_error("RecipeBoard not found.");
+	// More readable orders without changing the source asset.
+	recipe_board->scale *= glm::vec3(1.25f, 1.0f, 1.25f);
+	if (!plate) throw std::runtime_error("Plate not found.");
+	plate_height = burger_meshes->lookup("Plate").max.z;
+
+	auto make_instance = [&](Scene::Transform *parent, std::string const &name) {
+		scene.transforms.emplace_back();
+		Scene::Transform *transform = &scene.transforms.back();
+		transform->name = name;
+		transform->parent = parent;
+		scene.drawables.emplace_back(transform);
+		scene.drawables.back().pipeline = ingredient_looks.front().pipeline;
+		scene.drawables.back().pipeline.count = 0;
+		return Instance{transform, &scene.drawables.back()};
+	};
+	{ // Allocate visible bins plus one incoming row; no per-frame scene allocations.
+		for (size_t i = 0; i < bin_transforms.size(); ++i) {
+			Scene::Drawable *drawable = nullptr;
+			for (Scene::Drawable &candidate : scene.drawables) {
+				if (candidate.transform == bin_transforms[i]) drawable = &candidate;
+			}
+			if (!drawable) throw std::runtime_error("Missing drawable: " + bin_transforms[i]->name);
+			bin_pool.push_back({bin_transforms[i], drawable});
+		}
+		for (size_t i = 0; i < bin_transforms.size(); ++i) {
+			Instance bin = make_instance(bin_transforms[i]->parent, "IncomingBin." + std::to_string(i));
+			bin.transform->position = bin_transforms[i]->position;
+			bin.transform->rotation = bin_transforms[i]->rotation;
+			bin.transform->scale = bin_transforms[i]->scale;
+			bin.drawable->pipeline = bin_pool[i].drawable->pipeline;
+			bin.drawable->pipeline.count = 0;
+			bin_pool.push_back(bin);
+		}
+		for (size_t i = 0; i < bin_pool.size(); ++i) {
+			supply_pool.push_back(make_instance(bin_pool[i].transform, "Supply." + std::to_string(i)));
+		}
+		for (size_t i = 0; i < stack_pool.size(); ++i) {
+			stack_pool[i] = make_instance(plate, "Stack." + std::to_string(i));
+		}
+	}
+	clear_stack();
+	sync_supplies();
+	std::cout << "Burger seed: " << game.seed << std::endl;
 }
 
 PlayMode::~PlayMode() {
 }
 
-bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
-
-	if (evt.type == SDL_EVENT_KEY_DOWN) {
-		if (evt.key.key == SDLK_ESCAPE) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, false);
-			return true;
-		} else if (evt.key.key == SDLK_A) {
-			left.downs += 1;
-			left.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.downs += 1;
-			right.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
+void PlayMode::sync_supplies() {
+	assert(game.bins.size() == bin_transforms.size());
+	for (size_t i = 0; i < supply_pool.size(); ++i) {
+		Instance &instance = supply_pool[i];
+		if (i >= game.bins.size()) {
+			instance.drawable->pipeline.count = 0;
+			continue;
 		}
-	} else if (evt.type == SDL_EVENT_KEY_UP) {
-		if (evt.key.key == SDLK_A) {
-			left.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.pressed = false;
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, true);
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
-			glm::vec2 motion = glm::vec2(
-				evt.motion.xrel / float(window_size.y),
-				-evt.motion.yrel / float(window_size.y)
-			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
-			return true;
-		}
+		IngredientLook const &look = ingredient_looks.at(static_cast<size_t>(game.bins[i]));
+		instance.drawable->pipeline = look.pipeline;
+		instance.transform->scale = look.bin_scale;
+		glm::vec3 center = 0.5f * (look.min + look.max);
+		instance.transform->position = glm::vec3(-center.x * look.bin_scale.x,
+			-center.y * look.bin_scale.y, 0.12f - look.min.z * look.bin_scale.z);
 	}
+}
 
+void PlayMode::clear_stack() {
+	for (Instance &instance : stack_pool) instance.drawable->pipeline.count = 0;
+	stack_count = 0;
+	stack_height = plate_height;
+}
+
+void PlayMode::restart_game() {
+	game.reset_run(std::random_device{}());
+	phase = Phase::Ready;
+	selected_slot = -1;
+	feedback_time = 0.0f;
+	arm_yaw->rotation = arm_yaw_base_rotation;
+	arm_shoulder->rotation = arm_shoulder_base_rotation;
+	arm_forearm->rotation = arm_forearm_base_rotation;
+	clear_stack();
+	sync_supplies();
+	std::cout << "Burger seed: " << game.seed << std::endl;
+}
+
+void PlayMode::pick_selected() {
+	if (selected_slot < 0) {
+		return;
+	}
+	if (!game.begin_pick(static_cast<size_t>(selected_slot))) return;
+	burger::PendingPick const &pick = *game.pending;
+	supply_pool[pick.slot].drawable->pipeline.count = 0;
+	if (pick.outcome == burger::PickOutcome::Wrong) {
+		clear_stack();
+	} else {
+		assert(stack_count < stack_pool.size());
+		IngredientLook const &look = ingredient_looks.at(static_cast<size_t>(pick.ingredient));
+		Instance &instance = stack_pool[stack_count++];
+		instance.drawable->pipeline = look.pipeline;
+		instance.transform->scale = look.stack_scale;
+		glm::vec3 center = 0.5f * (look.min + look.max);
+		instance.transform->position = glm::vec3(-center.x * look.stack_scale.x,
+			-center.y * look.stack_scale.y, stack_height - look.min.z * look.stack_scale.z);
+		stack_height += (look.max.z - look.min.z) * look.stack_scale.z;
+	}
+	phase = Phase::Feedback;
+	feedback_time = pick.outcome == burger::PickOutcome::Completed ? 0.9f : 0.3f;
+}
+
+bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &) {
+	if (evt.type != SDL_EVENT_KEY_DOWN || evt.key.repeat) return false;
+	if (evt.key.key == SDLK_ESCAPE) {
+		SDL_Event quit{};
+		quit.type = SDL_EVENT_QUIT;
+		SDL_PushEvent(&quit);
+		return true;
+	}
+	if (evt.key.key == SDLK_R) {
+		restart_game();
+		return true;
+	}
+	if (phase != Phase::Ready) return true;
+	if (evt.key.key >= SDLK_1 && evt.key.key <= SDLK_6) {
+		selected_slot = static_cast<int>(evt.key.key - SDLK_1);
+		return true;
+	}
+	if (evt.key.key == SDLK_RETURN || evt.key.key == SDLK_KP_ENTER) {
+		pick_selected();
+		return true;
+	}
 	return false;
 }
 
 void PlayMode::update(float elapsed) {
-
-	//slowly rotates through [0,1):
-	wobble += elapsed / 10.0f;
-	wobble -= std::floor(wobble);
-
-	arm_yaw->rotation = arm_yaw_base_rotation * glm::angleAxis(
-		glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 0.0f, 1.0f)
-	);
-	arm_shoulder->rotation = arm_shoulder_base_rotation * glm::angleAxis(
-		glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-	arm_forearm->rotation = arm_forearm_base_rotation * glm::angleAxis(
-		glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-		glm::vec3(0.0f, 1.0f, 0.0f)
-	);
-
-	//move camera:
-	{
-
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
-
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
-	}
-
-	//reset button press counters:
-	left.downs = 0;
-	right.downs = 0;
-	up.downs = 0;
-	down.downs = 0;
+	if (phase != Phase::Feedback) return;
+	feedback_time -= elapsed;
+	if (feedback_time > 0.0f) return;
+	assert(game.pending);
+	if (game.pending->outcome == burger::PickOutcome::Completed) clear_stack();
+	bool committed = game.commit_advance();
+	assert(committed && "Feedback must finish a pending pick.");
+	(void)committed;
+	sync_supplies();
+	selected_slot = -1;
+	phase = Phase::Ready;
 }
 
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
@@ -217,25 +292,49 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 	scene.draw(*camera);
 
-	{ //use DrawLines to overlay some text:
-		glDisable(GL_DEPTH_TEST);
-		float aspect = float(drawable_size.x) / float(drawable_size.y);
-		DrawLines lines(glm::mat4(
-			1.0f / aspect, 0.0f, 0.0f, 0.0f,
-			0.0f, 1.0f, 0.0f, 0.0f,
-			0.0f, 0.0f, 1.0f, 0.0f,
-			0.0f, 0.0f, 0.0f, 1.0f
-		));
 
-		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
-		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+
+	{ // Order text lies on the green panel, in RecipeBoard local coordinates.
+		glm::mat4 clip_from_world = camera->make_projection() * glm::mat4(camera->transform->make_local_from_world());
+		DrawLines lines(clip_from_world * glm::mat4(recipe_board->make_world_from_local()));
+		auto text = [&](std::string const &label, float x, float z, float height, glm::u8vec4 color) {
+			lines.draw_text(label, glm::vec3(x,-0.116f,z), glm::vec3(height,0,0),
+				glm::vec3(0,0,height), color);
+		};
+		glm::u8vec4 ink(24,48,44,255), done(28,65,46,255), current(255,247,205,255);
+		text("ORDER", -1.14f, 1.80f, 0.19f, ink);
+		size_t progress = game.order.next;
+		if (game.pending) {
+			progress = game.pending->outcome == burger::PickOutcome::Wrong ? 0 : progress + 1;
+		}
+		for (size_t i = 0; i < game.order.layers.size(); ++i) {
+			std::string label = std::to_string(i+1) + ". " +
+				ingredient_looks.at(static_cast<size_t>(game.order.layers[i])).name;
+			text(label, i < 5 ? -1.14f : 0.08f, 1.56f-float(i%5)*0.19f, 0.16f,
+				i < progress ? done : (i == progress ? current : ink));
+		}
+		std::string status;
+		if (phase == Phase::Feedback) {
+			status = game.pending->outcome == burger::PickOutcome::Wrong ? "WRONG - TRY AGAIN" :
+				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "CORRECT");
+		}
+		text(status, -1.14f, 0.56f, 0.10f, ink);
 	}
+	{ // Right-aligned controls stay outside the order board.
+		glDisable(GL_DEPTH_TEST);
+		float aspect = camera->aspect;
+		float height = std::min(0.04f, aspect / 20.0f);
+		DrawLines lines(glm::mat4(1.0f/aspect,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1));
+		std::array<std::string, 2> hints = {"1-6 SELECT / ENTER PICK", "R RESTART / ESC QUIT"};
+		for (size_t i = 0; i < hints.size(); ++i) {
+			size_t first = lines.attribs.size();
+			glm::vec3 end;
+			lines.draw_text(hints[i], glm::vec3(0,-0.88f-float(i)*0.07f,0),
+				glm::vec3(height,0,0), glm::vec3(0,height,0), glm::u8vec4(245,245,230,255), &end);
+			for (size_t v = first; v < lines.attribs.size(); ++v) {
+				lines.attribs[v].Position.x += aspect - 0.06f - end.x;
+			}
+		}
+	}
+	GL_ERRORS();
 }
