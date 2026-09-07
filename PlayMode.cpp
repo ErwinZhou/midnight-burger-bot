@@ -154,7 +154,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 	recipe_board->position = glm::vec3(0.35f, 2.35f, 2.2f);
 	std::array<char const *, 10> icon_names = {"BunBottom", "Patty", "Lettuce", "CheeseSlice", "BunTop",
 		"TomatoSlice", "OnionRing", "PickleSlice", "BaconStrip", "SauceBlob"};
-	glGenTextures(icon_textures.size(), icon_textures.data());
+	glGenTextures(static_cast<GLsizei>(icon_textures.size()), icon_textures.data());
 	for (size_t i = 0; i < icon_textures.size(); ++i) {
 		glm::uvec2 size;
 		std::vector<glm::u8vec4> pixels;
@@ -262,7 +262,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 }
 
 PlayMode::~PlayMode() {
-	glDeleteTextures(icon_textures.size(), icon_textures.data());
+	glDeleteTextures(static_cast<GLsizei>(icon_textures.size()), icon_textures.data());
 	glDeleteBuffers(1, &icon_buffer);
 	glDeleteVertexArrays(1, &icon_vao);
 }
