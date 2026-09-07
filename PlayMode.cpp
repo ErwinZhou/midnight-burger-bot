@@ -728,9 +728,8 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		std::string status;
 		if (released && game.pending) {
 			status = game.pending->outcome == burger::PickOutcome::Wrong ? "WRONG - TRY AGAIN" :
-				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "CORRECT");
+				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "");
 		}
-		if (phase == Phase::Hovering) status = "ENTER TO GRAB";
 		if (phase == Phase::GameOver) status = "TIME UP - R TO RESTART";
 		text(status, -1.07f, 0.52f, 0.08f, ink);
 	}
