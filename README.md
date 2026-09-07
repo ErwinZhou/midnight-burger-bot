@@ -1,35 +1,57 @@
 # Midnight Burger Bot
 
-Current release verification and platform limits: [RELEASE_CHECK.md](RELEASE_CHECK.md).
+- **Author**: Yuchen Zhou
+- **Description**: It's midnight. Every human cook has gone home. The only one still on shift is you, a little bot bolted to a three-joint robot arm behind a very counter. Orders keep sliding in on the wall screen, the ingredient bins keep rolling past, and nobody told you what a "burger" is supposed to look like. Stack the layers in order to make a nice one. Get one wrong and the whole thing hits the bin. **Come on! Someone are hungry.**
 
-Completed burgers now transfer as a whole stack onto the right-hand tray, ride out to the right, and leave an empty tray to return before replenishment and the next order. The clock continues; timeout freezes serving and R restores the tray. Narrow windows preserve the horizontal play area. Individual order titles and point labels are no longer shown.
+![Game Preview](screenshot.png)
 
-Author: Yuchen Zhou
+# Asset Pipeline
+## Assets
+Every mesh in this game was modeled in Blender. The ten ingredients:
 
-Design: Build burgers by driving a three-joint robot arm between six ingredient bins and a central assembly plate. Ingredient order matters: correct layers complete an order, while a wrong layer scraps the current stack.
+| | | | | |
+|---|---|---|---|---|
+| ![Bottom Bun](dist/icons/BunBottom.png) | ![Patty](dist/icons/Patty.png) | ![Lettuce](dist/icons/Lettuce.png) | ![Cheese](dist/icons/CheeseSlice.png) | ![Top Bun](dist/icons/BunTop.png) |
+| Bottom Bun | Patty | Lettuce | Cheese | Top Bun |
+| ![Tomato](dist/icons/TomatoSlice.png) | ![Onion](dist/icons/OnionRing.png) | ![Pickle](dist/icons/PickleSlice.png) | ![Bacon](dist/icons/BaconStrip.png) | ![Sauce](dist/icons/SauceBlob.png) |
+| Tomato | Onion | Pickle | Bacon | Sauce |
 
-Screen Shot:
+Plus the bot, the three-joint arm and its fingers, six ingredient bins, the conveyor and its tunnel housings, the assembly plate, the discard bin, the counter, the service bell and the wall-mounted order board.
 
-![Screen Shot](screenshot.png)
+## How it works
+The editable source is [`scenes/burger.blend`](scenes/burger.blend) . There is only one scene, flat vertex colors, no textures. Running `make` from `scenes/` invokes the project's Blender exporters to produce two files: [`dist/burger.pnct`](dist/burger.pnct) holds the packed position/normal/color/texcoord vertex data for every mesh, and [`dist/burger.scene`](dist/burger.scene) holds the transform hierarchy, mesh instances and the camera. At startup `PlayMode` loads both, then looks up the named transforms it needs . Arm joints, bins, plate are animated at runtime. The arm's reach, the bin slots and the discard bin are all positioned from code, so the layout can be tuned without reopening Blender.
 
-How To Play:
+The order-board icons are a second, smaller pipeline: [`scenes/export-icons.py`](scenes/export-icons.py) renders each of the ten ingredient models to a transparent 192×192 PNG in `dist/icons`, from a shared camera angle and light rig so the icon reads as the same object you see sitting in the bin. `make -C scenes icons` regenerates them; the game loads them once at startup and draws them as textured quads on the board.
 
-The Step 5 build uses a fixed camera. Press **1–6** to select a bin position (its ingredient changes at runtime), **Enter** to pick, **R** to restart with a fresh order, and **Escape** to quit. No mouse is required. The wider wall board shows ingredient icons separated by plus signs, read left to right, then onto the second row. The next ingredient has a border and completed ingredients have check marks. There are no bin numbers, selection outlines, or ingredient-name overlays; slots run left to right. Selecting a slot moves the arm above it; once it stops, Enter lowers the gripper to pick. Input is locked during movement, while R and Escape remain available.
+Both generated asset sets are checked into `dist/`, so **building and running the game does not require Blender**. `python3 scenes/validate-burger.py` checks the exported scene for correct names, colors, hierarchy, work-envelope distances, ingredient alignment, triangle budget, camera count and chunk structure.
 
-Orders contain 3–10 layers and may repeat fillings. The arm descends, closes its fingers, lifts and carries the ingredient to the plate, then releases it at the current stack height. After feedback, bins slide left through the picked slot and prepared supplies enter from the right; the next arrangement commits only when sliding finishes. A wrong pick clears the stack and restarts the same recipe; completing an order starts a new one. Each session lasts 180 seconds, including animation time. Completing an order awards twice its layer count in points when its last layer is released; a wrong release costs 5 seconds. At zero, GameOver freezes gameplay and the board shows the final score. R starts a fresh 180-second session. Conveyor endpoints have fixed tunnel housings made from the existing counter mesh. Clipping is recessed inside the housings; all six resting slots remain outside them. The arm base and discard bin are positioned at runtime within the arm's reach.
+# How To Play:
 
-Build with `node Maekfile.js -q`. Run logic tests with `node Maekfile.js -q :test-logic`. To check the scene integration, build `node Maekfile.js -q dist/play-mode-test`, then run `./dist/play-mode-test objs/step5` (requires an OpenGL-capable desktop session; Windows executable has an `.exe` suffix).
+1. You are the bot. The wall board shows your order as a row of ingredient icons from left to right. I am sure robot does not need a glass for that.
+2. Six bins sit on the conveyor in front of you. Press **1–6** to pick a slot and the arm swings over it. Press **Enter** and the gripper drops, closes, lifts, carries the ingredient to the plate and lets it go. There are no bin labels, you must identify ingredients by looking at them, like a chief.
+3. **Order matters.** A correct layer lands on the stack. A **wrong layer ruins the entire burger** and you start the same recipe over from an empty plate, minus **5 seconds** off the clock. No mercy from your boss. Oh btw, he is a bot too.
+4. After every pick the conveyor shuffles: the bins you used slide off to the left and fresh supplies roll in from the right. The good news. The ingredient you need next is always somewhere in the six. The bad news is you still have to find it.
+5. Two orders are shown at once: the one you're building on the left, the one waiting on the right. Press **Tab** to swap them, but only **before your first grab**. Once the gripper closes on layer one, you're committed. Finish an order and you score **twice its layer count**; orders run from 3 to 10 layers, and ingredients can repeat.
+6. You get **180 seconds**, animation time included. The board shows your final score once it is end.
+7. Want another shift? Press **R** for a fresh 180 seconds. **Escape** clocks you out.
 
-Asset Pipeline:
+## Controls
+- **1–6** — select a bin (arm moves above it)
+- **Enter** — pick from the selected bin
+- **Tab** — swap the active and waiting order (before your first grab only)
+- **R** — restart with a fresh session
+- **Escape** — quit
 
-The editable source is `scenes/burger.blend`. From `scenes/`, running `make` invokes the project's original Blender exporters to generate `dist/burger.pnct` for mesh data and `dist/burger.scene` for transforms, hierarchy, mesh instances, and the camera. Run `python3 scenes/validate-burger.py` from the repository root to check names, colors, hierarchy, work-envelope distances, ingredient alignment, triangle budget, camera count, and chunk structure.
+No mouse required. Input is locked while the arm is moving; **R** and **Escape** always work.
 
-The generated runtime assets are checked into `dist/`, so building or running the game does not require Blender. All Burger Bot geometry and vertex colors were created for this project.
+# Building
 
+```sh
+node Maekfile.js -q                       # build the game
+node Maekfile.js -q :test-logic           # run the logic tests
+node Maekfile.js -q dist/play-mode-test   # build the scene-integration test
+./dist/play-mode-test objs/step5          # run it (needs an OpenGL desktop session)
+```
+
+# Notes
 This game was built with [NEST](NEST.md).
-
-See [GAMEPLAY_WALKTHROUGH.md](GAMEPLAY_WALKTHROUGH.md) for the state machine, function responsibilities and complete correct/wrong-pick examples.
-
-Order icons: ten transparent 192×192 PNGs in `dist/icons` are rendered from the existing ingredient models and loaded once at startup. Regenerate with `make -C scenes icons` (Blender required only for regeneration). This target does not save the Blender scene or export mesh/scene files. Include `dist/icons` when distributing the game. Board layout changes are runtime transforms; customer portraits remain deferred.
-
-Two-order selection: the board shows the selected order on the left and a waiting order on the right, each with its potential points. Press **Tab** before the first confirmed grab to swap them; switching clears any hovered selection but does not change bin contents or reset the timer. The first grab locks the current order, including wrong-pick retries. After completion and conveyor advance, the waiting order becomes active and a new waiting order is generated. Only one burger is assembled at a time. Movement and GameOver block switching; R resets both orders. No sound has been added.
