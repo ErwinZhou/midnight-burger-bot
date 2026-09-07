@@ -345,7 +345,7 @@ void PlayMode::begin_slide() {
 	for (size_t i = 0; i < n+k; ++i) slide_starts[i] = bin_pool[i].transform->position;
 	phase = Phase::Sliding;
 	move_time = 0.0f;
-	move_duration = 0.45f + 0.25f*float(k);
+	move_duration = 0.35f + 0.20f*float(k);
 }
 
 void PlayMode::finish_slide() {
@@ -448,7 +448,7 @@ void PlayMode::select_slot(size_t slot) {
 	pickup = supply_target(slot);
 	glm::vec3 hover = pickup;
 	hover.z = 2.7f;
-	move_arm(hover, Phase::Selecting, 0.65f);
+	move_arm(hover, Phase::Selecting, 0.40f);
 }
 
 void PlayMode::pick_selected() {
@@ -463,7 +463,7 @@ void PlayMode::pick_selected() {
 	} else {
 		destination = plate->make_world_from_local() * glm::vec4(0,0,stack_height+thickness+0.08f,1);
 	}
-	move_arm(pickup, Phase::Descending, 0.4f);
+	move_arm(pickup, Phase::Descending, 0.30f);
 }
 
 void PlayMode::release_ingredient() {
@@ -496,7 +496,7 @@ void PlayMode::finish_phase() {
 	case Phase::Descending:
 		phase = Phase::Closing;
 		move_time = 0.0f;
-		move_duration = 0.15f;
+		move_duration = 0.12f;
 		return;
 	case Phase::Closing: {
 		// keep the food's world transform when attaching it to the palm
@@ -514,19 +514,19 @@ void PlayMode::finish_phase() {
 		carrying = true;
 		glm::vec3 hover = pickup;
 		hover.z = 2.7f;
-		move_arm(hover, Phase::Lifting, 0.4f);
+		move_arm(hover, Phase::Lifting, 0.28f);
 		return;
 	}
 	case Phase::Lifting:
-		move_arm(travel_center, Phase::Transporting, 0.55f);
+		move_arm(travel_center, Phase::Transporting, 0.34f);
 		return;
 	case Phase::Transporting: {
 		glm::vec3 hover = destination + glm::vec3(0,0,0.55f);
-		move_arm(hover, Phase::Approaching, 0.55f);
+		move_arm(hover, Phase::Approaching, 0.34f);
 		return;
 	}
 	case Phase::Approaching:
-		move_arm(destination, Phase::Placing, 0.4f);
+		move_arm(destination, Phase::Placing, 0.32f);
 		return;
 	case Phase::Placing:
 		release_ingredient();
@@ -536,15 +536,15 @@ void PlayMode::finish_phase() {
 		}
 		phase = Phase::Opening;
 		move_time = 0.0f;
-		move_duration = 0.15f;
+		move_duration = 0.12f;
 		return;
 	case Phase::Opening:
-		move_arm(destination + glm::vec3(0,0,0.55f), Phase::Retreating, 0.35f);
+		move_arm(destination + glm::vec3(0,0,0.55f), Phase::Retreating, 0.23f);
 		return;
 	case Phase::Retreating:
 		phase = Phase::Feedback;
 		move_time = 0.0f;
-		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.6f : 0.2f;
+		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.35f : 0.08f;
 		return;
 	case Phase::Feedback:
 		begin_slide();
