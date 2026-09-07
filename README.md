@@ -1,5 +1,9 @@
 # Midnight Burger Bot
 
+Current release verification and platform limits: [RELEASE_CHECK.md](RELEASE_CHECK.md).
+
+Completed burgers now transfer as a whole stack onto the right-hand tray, ride out to the right, and leave an empty tray to return before replenishment and the next order. The clock continues; timeout freezes serving and R restores the tray. Narrow windows preserve the horizontal play area. Individual order titles and point labels are no longer shown.
+
 Author: Yuchen Zhou
 
 Design: Build burgers by driving a three-joint robot arm between six ingredient bins and a central assembly plate. Ingredient order matters: correct layers complete an order, while a wrong layer scraps the current stack.

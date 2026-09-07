@@ -107,6 +107,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
 
 	camera = &scene.cameras.front();
+	camera_fovy = camera->fovy;
 	SDL_SetWindowRelativeMouseMode(Mode::window, false);
 
 	{ // cache the original ingredient appearances before hiding their drawables
@@ -144,6 +145,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 
 	for (Scene::Transform &transform : scene.transforms) {
 		if (transform.name == "Plate") plate = &transform;
+		if (transform.name == "Tray") tray = &transform;
 		if (transform.name == "RecipeBoard") recipe_board = &transform;
 	}
 	if (!recipe_board) throw std::runtime_error("RecipeBoard not found.");
@@ -177,6 +179,12 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	if (!plate) throw std::runtime_error("Plate not found.");
 	plate_height = burger_meshes->lookup("Plate").max.z;
+	if (!tray) throw std::runtime_error("Tray not found");
+	tray_home = tray->position;
+	scene.transforms.emplace_back();
+	stack_root = &scene.transforms.back();
+	stack_root->name = "BurgerStack";
+	stack_root->parent = plate;
 
 	auto make_instance = [&](Scene::Transform *parent, std::string const &name) {
 		scene.transforms.emplace_back();
@@ -210,7 +218,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 			supply_pool.push_back(make_instance(bin_pool[i].transform, "Supply." + std::to_string(i)));
 		}
 		for (size_t i = 0; i < stack_pool.size(); ++i) {
-			stack_pool[i] = make_instance(plate, "Stack." + std::to_string(i));
+			stack_pool[i] = make_instance(stack_root, "Stack." + std::to_string(i));
 		}
 	}
 	for (auto *bin : bin_transforms) bin_anchors.push_back(bin->position);
@@ -379,6 +387,16 @@ void PlayMode::clear_stack() {
 	for (Instance &instance : stack_pool) instance.drawable->pipeline.count = 0;
 	stack_count = 0;
 	stack_height = plate_height;
+	stack_root->position = glm::vec3(0);
+}
+
+void PlayMode::begin_serve() {
+	// the tray floor is 0.08 above its local origin, below the raised side rails
+	glm::vec3 floor = tray->make_world_from_local() * glm::vec4(0,0,0.08f,1);
+	serve_target = glm::vec3(plate->make_local_from_world() * glm::vec4(floor,1)) -
+		glm::vec3(0,0,plate_height);
+	dispatch_offset = glm::vec3(18.0f,0,0);
+	move_arm(travel_center, Phase::Serving, 0.80f);
 }
 
 void PlayMode::restart_game() {
@@ -391,6 +409,7 @@ void PlayMode::restart_game() {
 	apply_arm(angles_for(travel_center));
 	set_fingers(0.0f);
 	clear_stack();
+	tray->position = tray_home;
 	sync_supplies();
 	std::cout << "Burger seed: " << game.seed << std::endl;
 }
@@ -550,6 +569,22 @@ void PlayMode::finish_phase() {
 		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.35f : 0.08f;
 		return;
 	case Phase::Feedback:
+		if (game.pending->outcome == burger::PickOutcome::Completed) begin_serve();
+		else begin_slide();
+		return;
+	case Phase::Serving:
+		phase = Phase::Dispatching;
+		move_time = 0;
+		move_duration = 0.85f;
+		return;
+	case Phase::Dispatching:
+		clear_stack();
+		phase = Phase::ReturningTray;
+		move_time = 0;
+		move_duration = 0.65f;
+		return;
+	case Phase::ReturningTray:
+		tray->position = tray_home;
 		begin_slide();
 		return;
 	case Phase::Sliding:
@@ -610,7 +645,18 @@ void PlayMode::update(float elapsed) {
 		}
 		float t = std::clamp(move_time/move_duration, 0.0f, 1.0f);
 		float smooth = t*t*(3.0f-2.0f*t);
-		if (phase == Phase::Sliding) {
+		if (phase == Phase::Serving) {
+			stack_root->position = serve_target*smooth + glm::vec3(0,0,0.55f*std::sin(float(M_PI)*t));
+			apply_arm(glm::mix(move_from, move_to, smooth));
+		} else if (phase == Phase::Dispatching || phase == Phase::ReturningTray) {
+			float amount = phase == Phase::Dispatching ? smooth : 1.0f-smooth;
+			glm::vec3 world_offset = dispatch_offset*amount;
+			tray->position = tray_home + glm::vec3(tray->parent->make_local_from_world()*glm::vec4(world_offset,0));
+			if (phase == Phase::Dispatching) {
+				stack_root->position = serve_target +
+					glm::vec3(plate->make_local_from_world()*glm::vec4(world_offset,0));
+			}
+		} else if (phase == Phase::Sliding) {
 			size_t k = game.pending->supply.removed;
 			for (size_t i = 0; i < game.bins.size()+k; ++i) {
 				bin_pool[i].transform->position = slide_starts[i] - float(k)*bin_step*smooth;
@@ -634,6 +680,9 @@ void PlayMode::update(float elapsed) {
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//update camera aspect ratio for drawable
 	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
+	// preserve the counter and board width in narrower windows
+	camera->fovy = 2.0f*std::atan(std::tan(camera_fovy*0.5f) *
+		std::max(1.0f, (16.0f/9.0f)/camera->aspect));
 
 	//set up light type and position for lit_color_texture_programs
 	glUseProgram(lit_color_texture_program->program);
@@ -642,7 +691,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
 	glUseProgram(0);
 
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+	glClearColor(0.042f, 0.066f, 0.080f, 1.0f);
 	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
