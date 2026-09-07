@@ -1,4 +1,8 @@
 objs/
+dist/play-mode-test
+dist/play-mode-test.exe
+dist/play-mode-test.pdb
+dist/play-mode-test.ilk
 dist/README-SDL.txt
 dist/README-glm.txt
 dist/README-libpng.txt
@@ -10,5 +14,8 @@ dist/game.exe
 scenes/SDL3.dll
 scenes/show-meshes*
 scenes/show-scene*
+scenes/burger-preview.png
+scenes/burger-ingredients-preview.png
+scenes/export-burger.log
 *.blend[0-9]
 maek-cache.json

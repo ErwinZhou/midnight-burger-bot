@@ -1,218 +1,293 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""Export Blender mesh data to the Game2 PNCT chunk format."""
 
-#based on 'export-sprites.py' and 'glsprite.py' from TCHOW Rainbow; code used is released into the public domain.
-#Patched for 15-466-f19 to remove non-pnct formats!
-#Patched for 15-466-f20 to merge data all at once (slightly faster)
+from __future__ import annotations
 
-#Note: Script meant to be executed within blender 4.x, as per:
-#blender --background --python export-meshes.py -- [...see below...]
-
-import sys,re
-
-args = []
-for i in range(0,len(sys.argv)):
-	if sys.argv[i] == '--':
-		args = sys.argv[i+1:]
-
-if len(args) != 2:
-	print("\n\nUsage:\nblender --background --python export-meshes.py -- <infile.blend[:collection]> <outfile.pnct>\nExports the meshes referenced by all objects in the specified collection(s) (default: all objects) to a binary blob.\n")
-	exit(1)
+import math
+import os
+from pathlib import Path
+import struct
+import sys
+import tempfile
 
 import bpy
 
-infile = args[0]
-collection_name = None
-m = re.match(r'^(.*):([^:]+)$', infile)
-if m:
-	infile = m.group(1)
-	collection_name = m.group(2)
-outfile = args[1]
 
-assert outfile.endswith(".pnct")
-
-print("Will export meshes referenced from ",end="")
-if collection_name:
-	print("collection '" + collection_name + "'",end="")
-else:
-	print('master collection',end="")
-print(" of '" + infile + "' to '" + outfile + "'.")
-
-import struct
-
-bpy.ops.wm.open_mainfile(filepath=infile)
-
-if collection_name:
-	if not collection_name in bpy.data.collections:
-		print("ERROR: Collection '" + collection_name + "' does not exist in scene.")
-		exit(1)
-	collection = bpy.data.collections[collection_name]
-else:
-	collection = bpy.context.scene.collection
+VERTEX_SIZE = 36
+SUPPORTED_COLOR_DOMAINS = {"CORNER", "POINT"}
 
 
-#meshes to write:
-to_write = set()
-did_collections = set()
-def add_meshes(from_collection):
-	global to_write
-	global did_collections
-	if from_collection in did_collections:
+def command_arguments() -> tuple[str, str]:
+	"""Return the source selector and destination after Blender's `--`."""
+	if "--" not in sys.argv:
+		raise SystemExit(
+			"usage: blender --background --python export-meshes.py -- "
+			"<source.blend[:collection]> <destination.pnct>"
+		)
+	arguments = sys.argv[sys.argv.index("--") + 1:]
+	if len(arguments) != 2:
+		raise SystemExit(
+			"expected exactly two exporter arguments: "
+			"<source.blend[:collection]> <destination.pnct>"
+		)
+	return arguments[0], arguments[1]
+
+
+def split_source_selector(selector: str) -> tuple[Path, str | None]:
+	"""Split `file.blend:Collection` without breaking a Windows drive prefix."""
+	direct_path = Path(selector).expanduser()
+	if direct_path.is_file():
+		return direct_path.resolve(), None
+	if ":" not in selector:
+		raise SystemExit("Blender source does not exist: " + selector)
+	file_text, collection_name = selector.rsplit(":", 1)
+	file_path = Path(file_text).expanduser()
+	if not file_path.is_file():
+		raise SystemExit("Blender source does not exist: " + file_text)
+	if not collection_name:
+		raise SystemExit("Collection name after ':' must not be empty")
+	return file_path.resolve(), collection_name
+
+
+def load_blend_file(source: Path) -> None:
+	"""Open the source unless Blender already has this exact file loaded."""
+	current = Path(bpy.data.filepath).resolve() if bpy.data.filepath else None
+	if current == source:
+		print("Using Blender file already open in this process: " + str(source))
 		return
-	did_collections.add(from_collection)
+	bpy.ops.wm.open_mainfile(filepath=str(source))
 
-	if from_collection.name[0] == '_':
-		print("Skipping collection '" + from_collection.name + "' because its name starts with an underscore.")
-		return
 
-	for obj in from_collection.objects:
-		if obj.type == 'MESH':
-			if obj.data.name[0] == '_':
-				print("Skipping mesh '" + obj.data.name + "' because its name starts with an underscore.")
-			else:
-				to_write.add(obj.data)
-		if obj.instance_collection:
-			add_meshes(obj.instance_collection)
-	for child in from_collection.children:
-		add_meshes(child)
+def selected_collection(name: str | None):
+	if name is None:
+		return bpy.context.scene.collection
+	collection = bpy.data.collections.get(name)
+	if collection is None:
+		raise RuntimeError("Collection not found: " + name)
+	return collection
 
-add_meshes(collection)
-#print("Added meshes from: ", did_collections)
 
-#set all collections visible: (so that meshes can be selected for triangulation)
-def set_visible(layer_collection):
-	layer_collection.exclude = False
-	layer_collection.hide_viewport = False
-	layer_collection.collection.hide_viewport = False
-	for child in layer_collection.children:
-		set_visible(child)
+def visible_mesh_objects(root_collection) -> list:
+	"""Collect project meshes recursively while honoring underscore helpers."""
+	objects = []
+	visited_collections = set()
 
-set_visible(bpy.context.view_layer.layer_collection)
+	def visit(collection) -> None:
+		if collection in visited_collections:
+			return
+		visited_collections.add(collection)
+		if collection.name.startswith("_"):
+			return
+		for obj in sorted(collection.objects, key=lambda item: item.name):
+			if obj.name.startswith("_"):
+				continue
+			if obj.instance_collection is not None:
+				raise RuntimeError(
+					"Collection instances are not supported by this project exporter: "
+					+ obj.name
+				)
+			if obj.type != "MESH":
+				continue
+			if obj.data.name.startswith("_"):
+				continue
+			objects.append(obj)
+		for child in sorted(collection.children, key=lambda item: item.name):
+			visit(child)
 
-#data contains vertex, normal, color, and texture data from the meshes:
-data = []
+	visit(root_collection)
+	return objects
 
-#strings contains the mesh names:
-strings = b''
 
-#index gives offsets into the data (and names) for each mesh:
-index = b''
+def representatives_by_mesh(objects: list) -> list[tuple[object, object]]:
+	"""Choose one deterministic object for every shared mesh datablock."""
+	users = {}
+	for obj in objects:
+		users.setdefault(obj.data, []).append(obj)
+	if not users:
+		raise RuntimeError("Selected collection contains no exportable meshes")
 
-vertex_count = 0
-for obj in bpy.data.objects:
-	if obj.data in to_write:
-		to_write.remove(obj.data)
-	else:
-		continue
+	representatives = []
+	for source_mesh, candidates in users.items():
+		# Prefer the object carrying the modifier stack. This lets linked scene
+		# instances share the evaluated geometry exported for their source object.
+		candidates.sort(key=lambda obj: (-len(obj.modifiers), obj.name))
+		representative = candidates[0]
+		modifier_users = [obj.name for obj in candidates if len(obj.modifiers) > 0]
+		if len(modifier_users) > 1:
+			print(
+				"WARNING: shared mesh '%s' has modifiers on multiple objects; "
+				"using '%s'. Users: %s"
+				% (source_mesh.name, representative.name, ", ".join(modifier_users))
+			)
+		representatives.append((source_mesh, representative))
 
-	obj.hide_select = False
-	mesh = obj.data
-	name = mesh.name
+	representatives.sort(key=lambda pair: pair[0].name)
+	return representatives
 
-	print("Writing '" + name + "'...")
 
-	if bpy.context.object:
-		bpy.ops.object.mode_set(mode='OBJECT') #get out of edit mode (just in case)
+def color_byte(value: float) -> int:
+	if not math.isfinite(value):
+		raise RuntimeError("Vertex color contains a non-finite value")
+	return max(0, min(255, int(value * 255.0)))
 
-	#select the object and make it the active object:
-	bpy.ops.object.select_all(action='DESELECT')
-	obj.select_set(True)
-	bpy.context.view_layer.objects.active = obj
-	bpy.ops.object.mode_set(mode='OBJECT')
 
-	#print(obj.visible_get()) #DEBUG
+def checked_vector(values, label: str) -> tuple[float, ...]:
+	result = tuple(float(value) for value in values)
+	if not all(math.isfinite(value) for value in result):
+		raise RuntimeError(label + " contains a non-finite value")
+	return result
 
-	#apply all modifiers (?):
-	bpy.ops.object.convert(target='MESH')
 
-	#subdivide object's mesh into triangles:
-	bpy.ops.object.mode_set(mode='EDIT')
-	bpy.ops.mesh.select_all(action='SELECT')
-	bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
-	bpy.ops.object.mode_set(mode='OBJECT')
+def serialize_mesh(obj, depsgraph) -> tuple[bytes, int]:
+	"""Return evaluated triangle vertices and their vertex count."""
+	evaluated_object = obj.evaluated_get(depsgraph)
+	mesh = evaluated_object.to_mesh(
+		preserve_all_data_layers=True,
+		depsgraph=depsgraph,
+	)
+	try:
+		mesh.calc_loop_triangles()
+		if not mesh.loop_triangles:
+			raise RuntimeError("Mesh has no triangles: " + obj.data.name)
 
-	#record mesh name, start position and vertex count in the index:
-	name_begin = len(strings)
-	strings += bytes(name, "utf8")
-	name_end = len(strings)
-	index += struct.pack('I', name_begin)
-	index += struct.pack('I', name_end)
+		if len(mesh.color_attributes) != 1:
+			raise RuntimeError(
+				"Mesh '%s' must have exactly one color attribute; found %d"
+				% (obj.data.name, len(mesh.color_attributes))
+			)
+		colors = mesh.color_attributes.active_color
+		if colors is None:
+			raise RuntimeError("Mesh has no active color attribute: " + obj.data.name)
+		if colors.name != "Color":
+			raise RuntimeError(
+				"Mesh '%s' active color attribute is '%s', expected 'Color'"
+				% (obj.data.name, colors.name)
+			)
+		if colors.domain not in SUPPORTED_COLOR_DOMAINS:
+			raise RuntimeError(
+				"Mesh '%s' uses unsupported color domain '%s'"
+				% (obj.data.name, colors.domain)
+			)
 
-	index += struct.pack('I', vertex_count) #vertex_begin
-	#...count will be written below
+		uv_data = None
+		if mesh.uv_layers.active is not None:
+			uv_data = mesh.uv_layers.active.data
 
-	colors = None
-	if len(obj.data.color_attributes) == 0:
-		print("WARNING: trying to export color data, but object '" + name + "' does not have color data; will output 0xffffffff")
-	else:
-		colors = obj.data.color_attributes.active_color;
-		if len(obj.data.color_attributes) != 1:
-			print("WARNING: object '" + name + "' has multiple vertex color layers; only exporting '" + colors.name + "'")
+		payload = bytearray()
+		for triangle in mesh.loop_triangles:
+			for loop_index in triangle.loops:
+				loop = mesh.loops[loop_index]
+				vertex = mesh.vertices[loop.vertex_index]
+				position = checked_vector(vertex.co, obj.data.name + " position")
+				if hasattr(mesh, "corner_normals"):
+					normal_source = mesh.corner_normals[loop_index].vector
+				else:
+					normal_source = loop.normal
+				normal = checked_vector(normal_source, obj.data.name + " normal")
 
-	uvs = None
-	if len(obj.data.uv_layers) == 0:
-		print("WARNING: trying to export texcoord data, but object '" + name + "' does not uv data; will output (0.0, 0.0)")
-	else:
-		uvs = obj.data.uv_layers.active.data
-		if len(obj.data.uv_layers) != 1:
-			print("WARNING: object '" + name + "' has multiple texture coordinate layers; only exporting '" + obj.data.uv_layers.active.name + "'")
+				if colors.domain == "CORNER":
+					color = colors.data[loop_index].color
+				else:
+					color = colors.data[loop.vertex_index].color
+				# The runtime material is opaque. Blender may synthesize zero-alpha
+				# corners for modifier-created faces, so validate every source channel
+				# but deliberately write a stable opaque alpha.
+				converted_color = tuple(color_byte(channel) for channel in color)
+				rgba = converted_color[:3] + (255,)
 
-	local_data = b''
+				if uv_data is None:
+					uv = (0.0, 0.0)
+				else:
+					uv = checked_vector(uv_data[loop_index].uv, obj.data.name + " UV")
 
-	#write the mesh triangles:
-	for poly in mesh.polygons:
-		assert(len(poly.loop_indices) == 3)
-		for i in range(0,3):
-			assert(mesh.loops[poly.loop_indices[i]].vertex_index == poly.vertices[i])
-			loop = mesh.loops[poly.loop_indices[i]]
-			vertex = mesh.vertices[loop.vertex_index]
-			for x in vertex.co:
-				local_data += struct.pack('f', x)
-			for x in loop.normal:
-				local_data += struct.pack('f', x)
+				payload.extend(struct.pack("<3f3f4B2f", *position, *normal, *rgba, *uv))
 
-			col = None
-			if colors != None and colors.domain == 'POINT':
-				col = colors.data[poly.vertices[i]].color
-			elif colors != None and colors.domain == 'CORNER':
-				col = colors.data[poly.loop_indices[i]].color
-			else:
-				col = (1.0, 1.0, 1.0, 1.0)
-			local_data += struct.pack('BBBB', int(col[0] * 255), int(col[1] * 255), int(col[2] * 255), 255)
+		vertex_count = len(mesh.loop_triangles) * 3
+		if len(payload) != vertex_count * VERTEX_SIZE:
+			raise RuntimeError("Internal PNCT vertex-size mismatch")
+		return bytes(payload), vertex_count
+	finally:
+		evaluated_object.to_mesh_clear()
 
-			if uvs != None:
-				uv = uvs[poly.loop_indices[i]].uv
-				local_data += struct.pack('ff', uv.x, uv.y)
-			else:
-				local_data += struct.pack('ff', 0, 0)
-		if len(local_data) > 1000:
-			data.append(local_data)
-			local_data = b''
-	vertex_count += len(mesh.polygons) * 3
 
-	data.append(local_data)
+def chunk(magic: bytes, payload: bytes) -> bytes:
+	if len(magic) != 4:
+		raise ValueError("Chunk magic must be exactly four bytes")
+	return struct.pack("<4sI", magic, len(payload)) + payload
 
-	index += struct.pack('I', vertex_count) #vertex_end
 
-data = b''.join(data)
+def write_atomic(destination: Path, payload: bytes) -> None:
+	destination.parent.mkdir(parents=True, exist_ok=True)
+	temporary_name = None
+	try:
+		with tempfile.NamedTemporaryFile(
+			mode="wb",
+			dir=destination.parent,
+			prefix=destination.name + ".",
+			suffix=".tmp",
+			delete=False,
+		) as temporary:
+			temporary.write(payload)
+			temporary.flush()
+			os.fsync(temporary.fileno())
+			temporary_name = temporary.name
+		os.replace(temporary_name, destination)
+	except BaseException:
+		if temporary_name and os.path.exists(temporary_name):
+			os.unlink(temporary_name)
+		raise
 
-#check that code created as much data as anticipated:
-assert(vertex_count * (4*3+4*3+1*4+4*2) == len(data))
 
-#write the data chunk and index chunk to an output blob:
-blob = open(outfile, 'wb')
-#first chunk: the data
-blob.write(struct.pack('4s',b'pnct')) #type
-blob.write(struct.pack('I', len(data))) #length
-blob.write(data)
-#second chunk: the strings
-blob.write(struct.pack('4s',b'str0')) #type
-blob.write(struct.pack('I', len(strings))) #length
-blob.write(strings)
-#third chunk: the index
-blob.write(struct.pack('4s',b'idx0')) #type
-blob.write(struct.pack('I', len(index))) #length
-blob.write(index)
-wrote = blob.tell()
-blob.close()
+def export_pnct(source: Path, collection_name: str | None, destination: Path) -> None:
+	load_blend_file(source)
+	root_collection = selected_collection(collection_name)
+	mesh_objects = visible_mesh_objects(root_collection)
+	representatives = representatives_by_mesh(mesh_objects)
+	depsgraph = bpy.context.evaluated_depsgraph_get()
 
-print("Wrote " + str(wrote) + " bytes [== " + str(len(data)+8) + " bytes of data + " + str(len(strings)+8) + " bytes of strings + " + str(len(index)+8) + " bytes of index] to '" + outfile + "'")
+	vertex_blob = bytearray()
+	string_blob = bytearray()
+	index_blob = bytearray()
+	vertex_cursor = 0
+
+	for source_mesh, representative in representatives:
+		name_bytes = source_mesh.name.encode("utf-8")
+		name_begin = len(string_blob)
+		string_blob.extend(name_bytes)
+		name_end = len(string_blob)
+
+		mesh_bytes, mesh_vertex_count = serialize_mesh(representative, depsgraph)
+		vertex_begin = vertex_cursor
+		vertex_blob.extend(mesh_bytes)
+		vertex_cursor += mesh_vertex_count
+		index_blob.extend(
+			struct.pack("<4I", name_begin, name_end, vertex_begin, vertex_cursor)
+		)
+		print(
+			"mesh %-24s object %-24s vertices %d"
+			% (source_mesh.name, representative.name, mesh_vertex_count)
+		)
+
+	output = b"".join((
+		chunk(b"pnct", bytes(vertex_blob)),
+		chunk(b"str0", bytes(string_blob)),
+		chunk(b"idx0", bytes(index_blob)),
+	))
+	write_atomic(destination, output)
+	print(
+		"PNCT export complete: %d meshes, %d vertices, %d bytes -> %s"
+		% (len(representatives), vertex_cursor, len(output), destination)
+	)
+
+
+def main() -> None:
+	selector, destination_text = command_arguments()
+	source, collection_name = split_source_selector(selector)
+	destination = Path(destination_text).expanduser().resolve()
+	if destination.suffix.lower() != ".pnct":
+		raise SystemExit("PNCT destination must end in .pnct: " + str(destination))
+	export_pnct(source, collection_name, destination)
+
+
+if __name__ == "__main__":
+	main()

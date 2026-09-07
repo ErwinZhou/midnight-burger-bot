@@ -114,9 +114,12 @@ if (maek.OS === 'windows') {
 // cppFile: name of c++ file to compile
 // objFileBase (optional): base name object file to produce (if not supplied, set to options.objDir + '/' + cppFile without the extension)
 //returns objFile: objFileBase + a platform-dependant suffix ('.o' or '.obj')
+const burger_logic_obj = maek.CPP('BurgerLogic.cpp');
+const main_obj = maek.CPP('main.cpp');
 const game_names = [
+	burger_logic_obj,
 	maek.CPP('PlayMode.cpp'),
-	maek.CPP('main.cpp'),
+	main_obj,
 	maek.CPP('LitColorTextureProgram.cpp')
 	//, maek.CPP('ColorTextureProgram.cpp')  //not used right now, but you might want it
 ];
@@ -153,6 +156,18 @@ const show_scene_names = [
 // exeFileBase: name of executable file to produce
 //returns exeFile: exeFileBase + a platform-dependant suffix (e.g., '.exe' on windows)
 const game_exe = maek.LINK([...game_names, ...common_names], 'dist/game');
+maek.LINK([...game_names.filter(obj => obj !== main_obj), ...common_names,
+	maek.CPP('tests/PlayModeTest.cpp')], 'dist/play-mode-test');
+// Standalone logic tests: no graphics libraries or asset files required.
+const burger_logic_test = maek.LINK([
+	burger_logic_obj, maek.CPP('tests/BurgerLogicTest.cpp')
+], 'objs/burger-logic-test', { LINKLibs: [] });
+const test_logic = async () => {
+	await maek.run([`./${burger_logic_test}`], 'TEST burger logic');
+};
+test_logic.depends = [burger_logic_test];
+test_logic.label = 'TEST burger logic';
+maek.tasks[':test-logic'] = test_logic;
 const show_meshes_exe = maek.LINK([...show_mesh_names, ...common_names], 'scenes/show-meshes');
 const show_scene_exe = maek.LINK([...show_scene_names, ...common_names], 'scenes/show-scene');
 

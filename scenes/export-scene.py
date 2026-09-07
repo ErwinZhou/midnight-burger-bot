@@ -1,230 +1,293 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""Export Blender object hierarchy to the Game2 Scene chunk format."""
 
-#based on 'export-sprites.py' and 'glsprite.py' from TCHOW Rainbow; code used is released into the public domain.
+from __future__ import annotations
 
-#Note: Script meant to be executed from within blender 4.x, as per:
-#blender --background --python export-scene.py -- [...see below...]
-
-import sys,re
-
-args = []
-for i in range(0,len(sys.argv)):
-	if sys.argv[i] == '--':
-		args = sys.argv[i+1:]
-
-if len(args) != 2:
-	print("\n\nUsage:\nblender --background --python export-scene.py -- <infile.blend>[:collection] <outfile.scene>\nExports the transforms of objects in collection (default: master collection) to a binary blob, indexed by the names of the objects that reference them.\n")
-	exit(1)
-
-
-infile = args[0]
-collection_name = None
-m = re.match(r'^(.*?):(.+)$', infile)
-if m:
-	infile = m.group(1)
-	collection_name = m.group(2)
-outfile = args[1]
-
-print("Will transforms of objects in ",end="")
-if collection_name:
-	print("collection '" + collection_name + "'",end="")
-else:
-	print('master collection',end="")
-print(" of '" + infile + "' to '" + outfile + "'.")
-
+import math
+import os
+from pathlib import Path
+import struct
+import sys
+import tempfile
 
 import bpy
-import mathutils
-import struct
-import math
-
-#---------------------------------------------------------------------
-#Export scene:
-
-bpy.ops.wm.open_mainfile(filepath=infile)
-
-if collection_name:
-	if not collection_name in bpy.data.collections:
-		print("ERROR: Collection '" + collection_name + "' does not exist in scene.")
-		exit(1)
-	collection = bpy.data.collections[collection_name]
-else:
-	collection = bpy.context.scene.collection
-
-#Scene file format:
-# str0 len < char > * [strings chunk]
-# xfh0 len < ... > * [transform hierarchy]
-# msh0 len < uint uint uint > [hierarchy point + mesh name]
-# cam0 len < uint params > [heirarchy point + camera params]
-# lig0 len < uint params > [hierarchy point + light params]
-
-strings_data = b""
-xfh_data = b""
-mesh_data = b""
-camera_data = b""
-lamp_data = b""
-
-#write_string will add a string to the strings section and return a packed (begin,end) reference:
-def write_string(string):
-	global strings_data
-	begin = len(strings_data)
-	strings_data += bytes(string, 'utf8')
-	end = len(strings_data)
-	return struct.pack('II', begin, end)
 
 
-#keep map from tuples of objects to hierarchy ids:
-# (obj,) <-- object just in scene
-# (par,par,obj,) <-- object being visited through instanced collections; 'par,' entries are empties instancing it
-obj_to_xfh = dict()
+SUPPORTED_OBJECT_TYPES = {"MESH", "CAMERA", "EMPTY", "LIGHT"}
 
-#maintain information about current instance stack:
-instance_parents = []
 
-def parent_names():
-	names = "'->'".join(map(lambda x: x.name, instance_parents))
-	if names != '': names = "'" + names + "': "
-	return names
-
-#write_xfh will add an object [and its parents] to the hierarchy section and return a packed (idx) reference:
-def write_xfh(obj):
-	global xfh_data
-	par_obj = tuple(instance_parents + [obj])
-	if par_obj in obj_to_xfh: return obj_to_xfh[par_obj]
-
-	if obj.parent == None:
-		if len(instance_parents) == 0:
-			parent_ref = struct.pack('i', -1)
-			world_to_parent = mathutils.Matrix()
-		else:
-			assert(tuple(instance_parents) in obj_to_xfh) #<-- NOTE: instance parent always written before being passed
-			parent_ref = obj_to_xfh[tuple(instance_parents)]
-			world_to_parent = mathutils.Matrix()
-	else:
-		parent_ref = write_xfh(obj.parent)
-		world_to_parent = obj.parent.matrix_world.copy()
-		world_to_parent.invert()
-	
-	ref = struct.pack('i', len(obj_to_xfh))
-	obj_to_xfh[par_obj] = ref
-	#print(repr(ref) + ": " + obj.name + " (" + repr(parent_ref) + ")")
-	transform = (world_to_parent @ obj.matrix_world).decompose()
-	#print(repr(transform))
-
-	xfh_data += parent_ref
-	xfh_data += write_string(obj.name)
-	xfh_data += struct.pack('3f', transform[0].x, transform[0].y, transform[0].z)
-	xfh_data += struct.pack('4f', transform[1].x, transform[1].y, transform[1].z, transform[1].w)
-	xfh_data += struct.pack('3f', transform[2].x, transform[2].y, transform[2].z)
-
-	return ref
-
-#write_mesh will add an object to the mesh section:
-def write_mesh(obj):
-	global mesh_data
-	assert(obj.type == 'MESH')
-	mesh_data += write_xfh(obj) #hierarchy reference
-	mesh_data += write_string(obj.data.name) #mesh name
-	print("mesh: " + parent_names() + obj.name + " / " + obj.data.name)
-
-#write_camera will add an object to the camera section:
-def write_camera(obj):
-	global camera_data
-	assert(obj.type == 'CAMERA')
-	print("camera: " + parent_names() + obj.name)
-
-	if obj.data.sensor_fit != 'VERTICAL':
-		print("  WARNING: camera FOV may seem weird because camera is not in vertical-fit mode.")
-
-	camera_data += write_xfh(obj) #hierarchy reference
-	if obj.data.type == 'PERSP':
-		camera_data += b"pers"
-		fov = math.atan2(0.5*obj.data.sensor_height, obj.data.lens)/math.pi*180.0*2
-		print("  Vertical FOV: " + str(fov) + " degrees");
-		camera_data += struct.pack('f', fov)
-	elif obj.data.type == 'ORTHO':
-		camera_data += b"orth"
-		print("  Vertical Ortho Size: " + str(obj.data.ortho_scale));
-		camera_data += struct.pack('f', obj.data.ortho_scale)
-	else:
-		assert(False and "Unsupported camera type '" + obj.data.type + "'")
-	
-	camera_data += struct.pack('ff', obj.data.clip_start, obj.data.clip_end)
-		
-#write_lamp will add an object to the lamp section:
-def write_light(obj):
-	global lamp_data
-	assert(obj.type == 'LIGHT')
-	print("lamp: " + parent_names() + obj.name)
-
-	f = 1.0 #factor to multiply energy by
-	lamp_data += write_xfh(obj) #hierarchy reference
-	if obj.data.type == 'POINT':
-		lamp_data += b"p"
-		f = 1.0 / (4.0 * 3.1415926)
-	elif obj.data.type == 'SUN' and obj.data.angle > 179.0 / 180.0 * 3.1416926:
-		lamp_data += b"h"
-	elif obj.data.type == 'SPOT':
-		lamp_data += b"s"
-		f = 1.0 / (4.0 * 3.1415926)
-	elif obj.data.type == 'SUN':
-		lamp_data += b"d"
-	else:
-		assert(False and "Unsupported lamp type '" + obj.data.type + "'")
-	print("  Type: " + lamp_data[-1:].decode('utf8'))
-	lamp_data += struct.pack('BBB',
-		int(obj.data.color.r * 255),
-		int(obj.data.color.g * 255),
-		int(obj.data.color.b * 255)
+def command_arguments() -> tuple[str, str]:
+	if "--" not in sys.argv:
+		raise SystemExit(
+			"usage: blender --background --python export-scene.py -- "
+			"<source.blend[:collection]> <destination.scene>"
 		)
-	print("  Energy: " + str(f*obj.data.energy))
-	lamp_data += struct.pack('f', f*obj.data.energy)
-	lamp_data += struct.pack('f', obj.data.cutoff_distance)
-	if obj.data.type == 'SPOT':
-		fov = obj.data.spot_size/math.pi*180.0
-		print("  Spot size: " + str(fov) + " degrees.")
-		lamp_data += struct.pack('f', fov)
+	arguments = sys.argv[sys.argv.index("--") + 1:]
+	if len(arguments) != 2:
+		raise SystemExit(
+			"expected exactly two exporter arguments: "
+			"<source.blend[:collection]> <destination.scene>"
+		)
+	return arguments[0], arguments[1]
+
+
+def split_source_selector(selector: str) -> tuple[Path, str | None]:
+	direct_path = Path(selector).expanduser()
+	if direct_path.is_file():
+		return direct_path.resolve(), None
+	if ":" not in selector:
+		raise SystemExit("Blender source does not exist: " + selector)
+	file_text, collection_name = selector.rsplit(":", 1)
+	file_path = Path(file_text).expanduser()
+	if not file_path.is_file():
+		raise SystemExit("Blender source does not exist: " + file_text)
+	if not collection_name:
+		raise SystemExit("Collection name after ':' must not be empty")
+	return file_path.resolve(), collection_name
+
+
+def load_blend_file(source: Path) -> None:
+	current = Path(bpy.data.filepath).resolve() if bpy.data.filepath else None
+	if current == source:
+		print("Using Blender file already open in this process: " + str(source))
+		return
+	bpy.ops.wm.open_mainfile(filepath=str(source))
+
+
+def selected_collection(name: str | None):
+	if name is None:
+		return bpy.context.scene.collection
+	collection = bpy.data.collections.get(name)
+	if collection is None:
+		raise RuntimeError("Collection not found: " + name)
+	return collection
+
+
+def project_objects(root_collection) -> list:
+	"""Collect objects recursively, excluding underscore-prefixed helpers."""
+	objects = set()
+	visited_collections = set()
+
+	def visit(collection) -> None:
+		if collection in visited_collections:
+			return
+		visited_collections.add(collection)
+		if collection.name.startswith("_"):
+			return
+		for obj in collection.objects:
+			if obj.name.startswith("_"):
+				continue
+			if obj.instance_collection is not None:
+				raise RuntimeError(
+					"Collection instances are not supported by this project exporter: "
+					+ obj.name
+				)
+			if obj.type not in SUPPORTED_OBJECT_TYPES:
+				raise RuntimeError(
+					"Unsupported Blender object type '%s' on '%s'"
+					% (obj.type, obj.name)
+				)
+			if obj.type == "MESH" and obj.data.name.startswith("_"):
+				continue
+			objects.add(obj)
+		for child in collection.children:
+			visit(child)
+
+	visit(root_collection)
+	if not objects:
+		raise RuntimeError("Selected collection contains no exportable objects")
+	return list(objects)
+
+
+def topological_order(objects: list) -> list:
+	"""Return parents before children with stable alphabetical sibling order."""
+	object_set = set(objects)
+	for obj in objects:
+		if obj.parent is not None and obj.parent not in object_set:
+			raise RuntimeError(
+				"Object '%s' has parent '%s' outside the exported collection"
+				% (obj.name, obj.parent.name)
+			)
+
+	ordered = []
+	visiting = set()
+	visited = set()
+
+	def visit(obj) -> None:
+		if obj in visited:
+			return
+		if obj in visiting:
+			raise RuntimeError("Parent cycle detected at object: " + obj.name)
+		visiting.add(obj)
+		if obj.parent is not None:
+			visit(obj.parent)
+		visiting.remove(obj)
+		visited.add(obj)
+		ordered.append(obj)
+
+	for obj in sorted(objects, key=lambda item: item.name):
+		visit(obj)
+	return ordered
+
+
+class StringTable:
+	def __init__(self) -> None:
+		self.payload = bytearray()
+
+	def append(self, value: str) -> tuple[int, int]:
+		encoded = value.encode("utf-8")
+		begin = len(self.payload)
+		self.payload.extend(encoded)
+		return begin, len(self.payload)
+
+
+def finite_values(values, label: str) -> tuple[float, ...]:
+	result = tuple(float(value) for value in values)
+	if not all(math.isfinite(value) for value in result):
+		raise RuntimeError(label + " contains a non-finite value")
+	return result
+
+
+def relative_transform(obj):
+	if obj.parent is None:
+		matrix = obj.matrix_world.copy()
 	else:
-		lamp_data += struct.pack('f', 0.0)
-	
+		matrix = obj.parent.matrix_world.inverted_safe() @ obj.matrix_world
+	position, rotation, scale = matrix.decompose()
+	rotation.normalize()
+	return (
+		finite_values(position, obj.name + " position"),
+		finite_values((rotation.x, rotation.y, rotation.z, rotation.w), obj.name + " rotation"),
+		finite_values(scale, obj.name + " scale"),
+	)
 
-written = set()
-def write_objects(from_collection):
-	global instance_parents
-	global written
-	for obj in from_collection.objects:
-		if tuple(instance_parents + [obj]) in written: continue
-		written.add(tuple(instance_parents + [obj]))
-		if obj.type == 'MESH':
-			write_mesh(obj)
-		elif obj.type == 'CAMERA':
-			write_camera(obj)
-		elif obj.type == 'LIGHT':
-			write_light(obj)
-		elif obj.type == 'EMPTY' and obj.instance_collection:
-			write_xfh(obj)
-			instance_parents.append(obj)
-			write_objects(obj.instance_collection)
-			instance_parents.pop()
-		else:
-			print('Skipping ' + obj.type)
-	for child in from_collection.children:
-		write_objects(child)
 
-write_objects(collection)
+def chunk(magic: bytes, payload: bytes) -> bytes:
+	if len(magic) != 4:
+		raise ValueError("Chunk magic must be exactly four bytes")
+	return struct.pack("<4sI", magic, len(payload)) + payload
 
-#write the strings chunk and scene chunk to an output blob:
-blob = open(outfile, 'wb')
-def write_chunk(magic, data):
-	blob.write(struct.pack('4s',magic)) #type
-	blob.write(struct.pack('I', len(data))) #length
-	blob.write(data)
 
-write_chunk(b'str0', strings_data)
-write_chunk(b'xfh0', xfh_data)
-write_chunk(b'msh0', mesh_data)
-write_chunk(b'cam0', camera_data)
-write_chunk(b'lmp0', lamp_data)
+def write_atomic(destination: Path, payload: bytes) -> None:
+	destination.parent.mkdir(parents=True, exist_ok=True)
+	temporary_name = None
+	try:
+		with tempfile.NamedTemporaryFile(
+			mode="wb",
+			dir=destination.parent,
+			prefix=destination.name + ".",
+			suffix=".tmp",
+			delete=False,
+		) as temporary:
+			temporary.write(payload)
+			temporary.flush()
+			os.fsync(temporary.fileno())
+			temporary_name = temporary.name
+		os.replace(temporary_name, destination)
+	except BaseException:
+		if temporary_name and os.path.exists(temporary_name):
+			os.unlink(temporary_name)
+		raise
 
-print("Wrote " + str(blob.tell()) + " bytes to '" + outfile + "'")
-blob.close()
+
+def export_scene(source: Path, collection_name: str | None, destination: Path) -> None:
+	load_blend_file(source)
+	root_collection = selected_collection(collection_name)
+	objects = topological_order(project_objects(root_collection))
+
+	names = [obj.name for obj in objects]
+	if len(names) != len(set(names)):
+		raise RuntimeError("Exported object names must be unique")
+	index_by_object = {obj: index for index, obj in enumerate(objects)}
+
+	light_names = [obj.name for obj in objects if obj.type == "LIGHT"]
+	if light_names:
+		raise RuntimeError(
+			"This project uses hardcoded runtime lighting; remove Blender lights: "
+			+ ", ".join(light_names)
+		)
+	cameras = [obj for obj in objects if obj.type == "CAMERA"]
+	if len(cameras) != 1:
+		raise RuntimeError(
+			"Burger Bot requires exactly one camera; found %d" % len(cameras)
+		)
+
+	strings = StringTable()
+	hierarchy_blob = bytearray()
+	mesh_blob = bytearray()
+	camera_blob = bytearray()
+
+	for obj in objects:
+		parent_index = 0xFFFFFFFF if obj.parent is None else index_by_object[obj.parent]
+		name_begin, name_end = strings.append(obj.name)
+		position, rotation, scale = relative_transform(obj)
+		hierarchy_blob.extend(struct.pack(
+			"<3I3f4f3f",
+			parent_index,
+			name_begin,
+			name_end,
+			*position,
+			*rotation,
+			*scale,
+		))
+
+		if obj.type == "MESH":
+			mesh_begin, mesh_end = strings.append(obj.data.name)
+			mesh_blob.extend(struct.pack(
+				"<3I", index_by_object[obj], mesh_begin, mesh_end
+			))
+
+	for camera in cameras:
+		data = camera.data
+		if data.type != "PERSP":
+			raise RuntimeError("Only perspective cameras are supported: " + camera.name)
+		if data.sensor_fit != "VERTICAL":
+			raise RuntimeError(
+				"Camera sensor_fit must be VERTICAL for stable exported FOV: "
+				+ camera.name
+			)
+		if data.lens <= 0.0 or data.sensor_height <= 0.0:
+			raise RuntimeError("Camera has invalid lens or sensor height: " + camera.name)
+		fov_degrees = math.degrees(
+			2.0 * math.atan(data.sensor_height / (2.0 * data.lens))
+		)
+		camera_blob.extend(struct.pack(
+			"<I4s3f",
+			index_by_object[camera],
+			b"pers",
+			fov_degrees,
+			float(data.clip_start),
+			float(data.clip_end),
+		))
+
+	output = b"".join((
+		chunk(b"str0", bytes(strings.payload)),
+		chunk(b"xfh0", bytes(hierarchy_blob)),
+		chunk(b"msh0", bytes(mesh_blob)),
+		chunk(b"cam0", bytes(camera_blob)),
+		chunk(b"lmp0", b""),
+	))
+	write_atomic(destination, output)
+	print(
+		"Scene export complete: %d transforms, %d meshes, %d cameras, %d bytes -> %s"
+		% (
+			len(objects),
+			len(mesh_blob) // 12,
+			len(cameras),
+			len(output),
+			destination,
+		)
+	)
+
+
+def main() -> None:
+	selector, destination_text = command_arguments()
+	source, collection_name = split_source_selector(selector)
+	destination = Path(destination_text).expanduser().resolve()
+	if destination.suffix.lower() != ".scene":
+		raise SystemExit("Scene destination must end in .scene: " + str(destination))
+	export_scene(source, collection_name, destination)
+
+
+if __name__ == "__main__":
+	main()
