@@ -4,6 +4,9 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 env:
   BASE_NAME: game2
   NEST_LIBS_VERSION: v0.15
@@ -28,7 +31,6 @@ jobs:
         shell: cmd
         run: |
           dir/w
-          #call "C:\Program Files (x86)\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           node Maekfile.js -q && copy README.md dist
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -45,14 +47,12 @@ jobs:
           TAG_NAME: ${{ github.event.release.tag_name }}
       - name: Upload Result
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ env.BASE_NAME }}-windows-${{ github.event.release.tag_name }}.zip
-          asset_name: ${{ env.BASE_NAME }}-windows-${{ github.event.release.tag_name }}.zip
-          asset_content_type: application/zip
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" "${BASE_NAME}-windows-${TAG_NAME}.zip" --clobber
   build-linux:
     name: Build (Linux)
     runs-on: ubuntu-latest
@@ -89,14 +89,12 @@ jobs:
           TAG_NAME: ${{ github.event.release.tag_name }}
       - name: Upload Result
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ env.BASE_NAME }}-linux-${{ github.event.release.tag_name }}.tar.gz
-          asset_name: ${{ env.BASE_NAME }}-linux-${{ github.event.release.tag_name }}.tar.gz
-          asset_content_type: application/gzip
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" "${BASE_NAME}-linux-${TAG_NAME}.tar.gz" --clobber
   build-macos:
     name: Build (MacOS)
     runs-on: macos-latest
@@ -131,11 +129,9 @@ jobs:
           TAG_NAME: ${{ github.event.release.tag_name }}
       - name: Upload Result
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ env.BASE_NAME }}-macos-${{ github.event.release.tag_name }}.tar.gz
-          asset_name: ${{ env.BASE_NAME }}-macos-${{ github.event.release.tag_name }}.tar.gz
-          asset_content_type: application/gzip
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" "${BASE_NAME}-macos-${TAG_NAME}.tar.gz" --clobber
