@@ -48,6 +48,9 @@ struct BurgerLogic {
 	uint32_t seed = 0;
 	std::mt19937 rng;
 	Order order;
+	Order waiting_order;
+	bool order_locked = false;
+	bool switch_order();
 	Bins bins{};
 	std::optional<PendingPick> pending;
 	float time_left = 180.0f;

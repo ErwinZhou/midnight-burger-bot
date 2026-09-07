@@ -69,6 +69,8 @@ void BurgerLogic::reset_run(uint32_t new_seed) {
 	rng.seed(seed);
 	pending.reset();
 	order = generate_order(rng);
+	waiting_order = generate_order(rng);
+	order_locked = false;
 	bins = plan_advance(bins, bins.size(), next_needed(), rng).after;
 	assert(next_available() && "Initial supplies must contain the next ingredient.");
 }
@@ -87,17 +89,31 @@ bool BurgerLogic::begin_pick(size_t slot) {
 		++pick.next_order.next;
 		if (pick.next_order.next == pick.next_order.layers.size()) {
 			pick.outcome = PickOutcome::Completed;
-			pick.next_order = generate_order(rng);
+			pick.next_order = waiting_order;
 		}
 	}
 	pick.supply = plan_advance(bins, slot + 1,
 		pick.next_order.layers.at(pick.next_order.next), rng);
 	pending = std::move(pick);
+	order_locked = true;
+	return true;
+}
+
+bool BurgerLogic::switch_order() {
+	if (pending || order_locked || game_over() || order.next != 0 || waiting_order.next != 0) return false;
+	// both generated recipes start with bottom bun, so switching never repaints supplies
+	if (waiting_order.layers.empty() ||
+		std::find(bins.begin(), bins.end(), waiting_order.layers.front()) == bins.end()) return false;
+	std::swap(order, waiting_order);
 	return true;
 }
 
 bool BurgerLogic::commit_advance() {
 	if (!pending || game_over()) return false;
+	if (pending->outcome == PickOutcome::Completed) {
+		waiting_order = generate_order(rng);
+		order_locked = false;
+	}
 	bins = pending->supply.after;
 	order = std::move(pending->next_order);
 	pending.reset();
