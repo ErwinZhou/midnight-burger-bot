@@ -7,6 +7,7 @@
 #include "Load.hpp"
 #include "gl_errors.hpp"
 #include "data_path.hpp"
+#include "load_save_png.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -106,6 +107,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
 
 	camera = &scene.cameras.front();
+	camera_fovy = camera->fovy;
 	SDL_SetWindowRelativeMouseMode(Mode::window, false);
 
 	{ // cache the original ingredient appearances before hiding their drawables
@@ -143,13 +145,46 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 
 	for (Scene::Transform &transform : scene.transforms) {
 		if (transform.name == "Plate") plate = &transform;
+		if (transform.name == "Tray") tray = &transform;
 		if (transform.name == "RecipeBoard") recipe_board = &transform;
 	}
 	if (!recipe_board) throw std::runtime_error("RecipeBoard not found.");
 	// more readable orders without changing the source asset
-	recipe_board->scale *= glm::vec3(1.25f, 1.0f, 1.25f);
+	recipe_board->scale = glm::vec3(3.8f, 1.0f, 1.45f);
+	recipe_board->position = glm::vec3(0.35f, 2.35f, 2.2f);
+	std::array<char const *, 10> icon_names = {"BunBottom", "Patty", "Lettuce", "CheeseSlice", "BunTop",
+		"TomatoSlice", "OnionRing", "PickleSlice", "BaconStrip", "SauceBlob"};
+	glGenTextures(icon_textures.size(), icon_textures.data());
+	for (size_t i = 0; i < icon_textures.size(); ++i) {
+		glm::uvec2 size;
+		std::vector<glm::u8vec4> pixels;
+		load_png(data_path(std::string("icons/")+icon_names[i]+".png"), &size, &pixels, LowerLeftOrigin);
+		glBindTexture(GL_TEXTURE_2D, icon_textures[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, size.x, size.y, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glGenVertexArrays(1, &icon_vao);
+	glGenBuffers(1, &icon_buffer);
+	glBindVertexArray(icon_vao);
+	glBindBuffer(GL_ARRAY_BUFFER, icon_buffer);
+	glVertexAttribPointer(lit_color_texture_program->Position_vec4, 3, GL_FLOAT, GL_FALSE, 5*sizeof(float), nullptr);
+	glEnableVertexAttribArray(lit_color_texture_program->Position_vec4);
+	glVertexAttribPointer(lit_color_texture_program->TexCoord_vec2, 2, GL_FLOAT, GL_FALSE, 5*sizeof(float), reinterpret_cast<void *>(3*sizeof(float)));
+	glEnableVertexAttribArray(lit_color_texture_program->TexCoord_vec2);
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	if (!plate) throw std::runtime_error("Plate not found.");
 	plate_height = burger_meshes->lookup("Plate").max.z;
+	if (!tray) throw std::runtime_error("Tray not found");
+	tray_home = tray->position;
+	scene.transforms.emplace_back();
+	stack_root = &scene.transforms.back();
+	stack_root->name = "BurgerStack";
+	stack_root->parent = plate;
 
 	auto make_instance = [&](Scene::Transform *parent, std::string const &name) {
 		scene.transforms.emplace_back();
@@ -183,7 +218,7 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 			supply_pool.push_back(make_instance(bin_pool[i].transform, "Supply." + std::to_string(i)));
 		}
 		for (size_t i = 0; i < stack_pool.size(); ++i) {
-			stack_pool[i] = make_instance(plate, "Stack." + std::to_string(i));
+			stack_pool[i] = make_instance(stack_root, "Stack." + std::to_string(i));
 		}
 	}
 	for (auto *bin : bin_transforms) bin_anchors.push_back(bin->position);
@@ -227,6 +262,48 @@ PlayMode::PlayMode() : scene(*burger_scene), bin_transforms(find_bins(scene)), g
 }
 
 PlayMode::~PlayMode() {
+	glDeleteTextures(icon_textures.size(), icon_textures.data());
+	glDeleteBuffers(1, &icon_buffer);
+	glDeleteVertexArrays(1, &icon_vao);
+}
+
+void PlayMode::draw_order_icons(glm::mat4 const &clip_from_board) {
+	auto const &program = *lit_color_texture_program;
+	glUseProgram(program.program);
+	glUniformMatrix4fv(program.CLIP_FROM_OBJECT_mat4, 1, GL_FALSE, glm::value_ptr(clip_from_board));
+	glUniformMatrix4x3fv(program.LIGHT_FROM_OBJECT_mat4x3, 1, GL_FALSE, glm::value_ptr(glm::mat4x3(1)));
+	glUniformMatrix3fv(program.LIGHT_FROM_NORMAL_mat3, 1, GL_FALSE, glm::value_ptr(glm::mat3(1)));
+	glUniform1i(program.ROW_CLIP_int, 0);
+	glUniform1i(program.LIGHT_TYPE_int, 1);
+	glUniform3f(program.LIGHT_DIRECTION_vec3, 0, 0, 0);
+	glUniform3f(program.LIGHT_ENERGY_vec3, 2, 2, 2);
+	glBindVertexArray(icon_vao);
+	glVertexAttrib4f(program.Color_vec4, 1, 1, 1, 1);
+	glVertexAttrib3f(program.Normal_vec3, 0, 0, 1);
+	glBindBuffer(GL_ARRAY_BUFFER, icon_buffer);
+	glActiveTexture(GL_TEXTURE0);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	for (size_t card = 0; card < 2; ++card) {
+		auto const &order = card == 0 ? game.order : game.waiting_order;
+	for (size_t i = 0; i < order.layers.size(); ++i) {
+		float x = -1.10f + float(card)*1.22f + float(i%5)*0.215f;
+		float z = i < 5 ? 1.20f : 0.65f;
+		float w = 0.17f, h = 0.43f, y = -0.12f;
+		float vertices[] = {x,y,z,0,0, x+w,y,z,1,0, x+w,y,z+h,1,1,
+			x,y,z,0,0, x+w,y,z+h,1,1, x,y,z+h,0,1};
+		glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STREAM_DRAW);
+		glBindTexture(GL_TEXTURE_2D, icon_textures.at(static_cast<size_t>(order.layers[i])));
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+	}
+	}
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glUseProgram(0);
 }
 
 void PlayMode::clip_row() {
@@ -279,7 +356,7 @@ void PlayMode::begin_slide() {
 	for (size_t i = 0; i < n+k; ++i) slide_starts[i] = bin_pool[i].transform->position;
 	phase = Phase::Sliding;
 	move_time = 0.0f;
-	move_duration = 0.45f + 0.25f*float(k);
+	move_duration = 0.35f + 0.20f*float(k);
 }
 
 void PlayMode::finish_slide() {
@@ -310,6 +387,16 @@ void PlayMode::clear_stack() {
 	for (Instance &instance : stack_pool) instance.drawable->pipeline.count = 0;
 	stack_count = 0;
 	stack_height = plate_height;
+	stack_root->position = glm::vec3(0);
+}
+
+void PlayMode::begin_serve() {
+	// the tray floor is 0.08 above its local origin, below the raised side rails
+	glm::vec3 floor = tray->make_world_from_local() * glm::vec4(0,0,0.08f,1);
+	serve_target = glm::vec3(plate->make_local_from_world() * glm::vec4(floor,1)) -
+		glm::vec3(0,0,plate_height);
+	dispatch_offset = glm::vec3(18.0f,0,0);
+	move_arm(travel_center, Phase::Serving, 0.80f);
 }
 
 void PlayMode::restart_game() {
@@ -322,6 +409,7 @@ void PlayMode::restart_game() {
 	apply_arm(angles_for(travel_center));
 	set_fingers(0.0f);
 	clear_stack();
+	tray->position = tray_home;
 	sync_supplies();
 	std::cout << "Burger seed: " << game.seed << std::endl;
 }
@@ -382,7 +470,7 @@ void PlayMode::select_slot(size_t slot) {
 	pickup = supply_target(slot);
 	glm::vec3 hover = pickup;
 	hover.z = 2.7f;
-	move_arm(hover, Phase::Selecting, 0.65f);
+	move_arm(hover, Phase::Selecting, 0.40f);
 }
 
 void PlayMode::pick_selected() {
@@ -397,7 +485,7 @@ void PlayMode::pick_selected() {
 	} else {
 		destination = plate->make_world_from_local() * glm::vec4(0,0,stack_height+thickness+0.08f,1);
 	}
-	move_arm(pickup, Phase::Descending, 0.4f);
+	move_arm(pickup, Phase::Descending, 0.30f);
 }
 
 void PlayMode::release_ingredient() {
@@ -430,7 +518,7 @@ void PlayMode::finish_phase() {
 	case Phase::Descending:
 		phase = Phase::Closing;
 		move_time = 0.0f;
-		move_duration = 0.15f;
+		move_duration = 0.12f;
 		return;
 	case Phase::Closing: {
 		// keep the food's world transform when attaching it to the palm
@@ -448,19 +536,19 @@ void PlayMode::finish_phase() {
 		carrying = true;
 		glm::vec3 hover = pickup;
 		hover.z = 2.7f;
-		move_arm(hover, Phase::Lifting, 0.4f);
+		move_arm(hover, Phase::Lifting, 0.28f);
 		return;
 	}
 	case Phase::Lifting:
-		move_arm(travel_center, Phase::Transporting, 0.55f);
+		move_arm(travel_center, Phase::Transporting, 0.34f);
 		return;
 	case Phase::Transporting: {
 		glm::vec3 hover = destination + glm::vec3(0,0,0.55f);
-		move_arm(hover, Phase::Approaching, 0.55f);
+		move_arm(hover, Phase::Approaching, 0.34f);
 		return;
 	}
 	case Phase::Approaching:
-		move_arm(destination, Phase::Placing, 0.4f);
+		move_arm(destination, Phase::Placing, 0.32f);
 		return;
 	case Phase::Placing:
 		release_ingredient();
@@ -470,17 +558,33 @@ void PlayMode::finish_phase() {
 		}
 		phase = Phase::Opening;
 		move_time = 0.0f;
-		move_duration = 0.15f;
+		move_duration = 0.12f;
 		return;
 	case Phase::Opening:
-		move_arm(destination + glm::vec3(0,0,0.55f), Phase::Retreating, 0.35f);
+		move_arm(destination + glm::vec3(0,0,0.55f), Phase::Retreating, 0.23f);
 		return;
 	case Phase::Retreating:
 		phase = Phase::Feedback;
 		move_time = 0.0f;
-		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.6f : 0.2f;
+		move_duration = game.pending->outcome == burger::PickOutcome::Completed ? 0.35f : 0.08f;
 		return;
 	case Phase::Feedback:
+		if (game.pending->outcome == burger::PickOutcome::Completed) begin_serve();
+		else begin_slide();
+		return;
+	case Phase::Serving:
+		phase = Phase::Dispatching;
+		move_time = 0;
+		move_duration = 0.85f;
+		return;
+	case Phase::Dispatching:
+		clear_stack();
+		phase = Phase::ReturningTray;
+		move_time = 0;
+		move_duration = 0.65f;
+		return;
+	case Phase::ReturningTray:
+		tray->position = tray_home;
 		begin_slide();
 		return;
 	case Phase::Sliding:
@@ -503,6 +607,13 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &) {
 		return true;
 	}
 	if (phase != Phase::Ready && phase != Phase::Hovering) return true;
+	if (evt.key.key == SDLK_TAB) {
+		if (game.switch_order()) {
+			selected_slot = -1;
+			phase = Phase::Ready;
+		}
+		return true;
+	}
 	if (evt.key.key >= SDLK_1 && evt.key.key <= SDLK_6) {
 		select_slot(static_cast<size_t>(evt.key.key - SDLK_1));
 		return true;
@@ -534,7 +645,18 @@ void PlayMode::update(float elapsed) {
 		}
 		float t = std::clamp(move_time/move_duration, 0.0f, 1.0f);
 		float smooth = t*t*(3.0f-2.0f*t);
-		if (phase == Phase::Sliding) {
+		if (phase == Phase::Serving) {
+			stack_root->position = serve_target*smooth + glm::vec3(0,0,0.55f*std::sin(float(M_PI)*t));
+			apply_arm(glm::mix(move_from, move_to, smooth));
+		} else if (phase == Phase::Dispatching || phase == Phase::ReturningTray) {
+			float amount = phase == Phase::Dispatching ? smooth : 1.0f-smooth;
+			glm::vec3 world_offset = dispatch_offset*amount;
+			tray->position = tray_home + glm::vec3(tray->parent->make_local_from_world()*glm::vec4(world_offset,0));
+			if (phase == Phase::Dispatching) {
+				stack_root->position = serve_target +
+					glm::vec3(plate->make_local_from_world()*glm::vec4(world_offset,0));
+			}
+		} else if (phase == Phase::Sliding) {
 			size_t k = game.pending->supply.removed;
 			for (size_t i = 0; i < game.bins.size()+k; ++i) {
 				bin_pool[i].transform->position = slide_starts[i] - float(k)*bin_step*smooth;
@@ -558,6 +680,9 @@ void PlayMode::update(float elapsed) {
 void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	//update camera aspect ratio for drawable
 	camera->aspect = float(drawable_size.x) / float(drawable_size.y);
+	// preserve the counter and board width in narrower windows
+	camera->fovy = 2.0f*std::atan(std::tan(camera_fovy*0.5f) *
+		std::max(1.0f, (16.0f/9.0f)/camera->aspect));
 
 	//set up light type and position for lit_color_texture_programs
 	glUseProgram(lit_color_texture_program->program);
@@ -566,7 +691,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
 	glUseProgram(0);
 
-	glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+	glClearColor(0.042f, 0.066f, 0.080f, 1.0f);
 	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -581,24 +706,40 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 	{ // order text lies on the green panel, in RecipeBoard local coordinates
 		glm::mat4 clip_from_world = camera->make_projection() * glm::mat4(camera->transform->make_local_from_world());
-		DrawLines lines(clip_from_world * glm::mat4(recipe_board->make_world_from_local()));
+		glm::mat4 clip_from_board = clip_from_world * glm::mat4(recipe_board->make_world_from_local());
+		draw_order_icons(clip_from_board);
+		DrawLines lines(clip_from_board);
 		auto text = [&](std::string const &label, float x, float z, float height, glm::u8vec4 color) {
 			lines.draw_text(label, glm::vec3(x,-0.116f,z), glm::vec3(height,0,0),
 				glm::vec3(0,0,height), color);
 		};
 		glm::u8vec4 ink(24,48,44,255), done(28,65,46,255), current(255,247,205,255);
-		text("ORDER", -1.14f, 1.80f, 0.19f, ink);
+		lines.draw(glm::vec3(0.055f,-0.125f,0.55f), glm::vec3(0.055f,-0.125f,1.86f), ink);
 		text("TIME " + std::to_string(static_cast<int>(std::ceil(game.time_left))) +
-			" / SCORE " + std::to_string(game.score), 0.02f, 1.82f, 0.10f, ink);
+			" / SCORE " + std::to_string(game.score), -0.25f, 1.89f, 0.075f, ink);
 		size_t progress = game.order.next;
 		if (game.pending && released) {
 			progress = game.pending->outcome == burger::PickOutcome::Wrong ? 0 : progress + 1;
 		}
-		for (size_t i = 0; i < game.order.layers.size(); ++i) {
-			std::string label = std::to_string(i+1) + ". " +
-				ingredient_looks.at(static_cast<size_t>(game.order.layers[i])).name;
-			text(label, i < 5 ? -1.14f : 0.08f, 1.56f-float(i%5)*0.19f, 0.16f,
-				i < progress ? done : (i == progress ? current : ink));
+		for (size_t card = 0; card < 2; ++card) {
+			auto const &order = card == 0 ? game.order : game.waiting_order;
+		for (size_t i = 0; i < order.layers.size(); ++i) {
+			float x = -1.10f + float(card)*1.22f + float(i%5)*0.215f;
+			float z = i < 5 ? 1.20f : 0.65f;
+			auto point = [](float x, float z) { return glm::vec3(x,-0.125f,z); };
+			if (card == 0 && i == progress) {
+				lines.draw(point(x-0.01f,z),point(x+0.18f,z),current);
+				lines.draw(point(x+0.18f,z),point(x+0.18f,z+0.43f),current);
+				lines.draw(point(x+0.18f,z+0.43f),point(x-0.01f,z+0.43f),current);
+				lines.draw(point(x-0.01f,z+0.43f),point(x-0.01f,z),current);
+			}
+			if (card == 0 && i < progress) {
+				lines.draw(point(x+0.10f,z+0.08f),point(x+0.13f,z+0.02f),done);
+				lines.draw(point(x+0.13f,z+0.02f),point(x+0.17f,z+0.18f),done);
+			}
+			if (i+1 < order.layers.size() && i%5 != 4) text("+",x+0.183f,z+0.20f,0.065f,ink);
+		}
+		if (order.layers.size() > 5) text("CONTINUE BELOW", -1.10f+float(card)*1.22f, 1.13f, 0.045f, ink);
 		}
 		std::string status;
 		if (released && game.pending) {
@@ -607,18 +748,19 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		}
 		if (phase == Phase::Hovering) status = "ENTER TO GRAB";
 		if (phase == Phase::GameOver) status = "TIME UP - R TO RESTART";
-		text(status, -1.14f, 0.56f, 0.10f, ink);
+		text(status, -1.07f, 0.52f, 0.08f, ink);
 	}
 	{ // right-aligned controls stay outside the order board
 		glDisable(GL_DEPTH_TEST);
 		float aspect = camera->aspect;
 		float height = std::min(0.04f, aspect / 20.0f);
 		DrawLines lines(glm::mat4(1.0f/aspect,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1));
-		std::array<std::string, 2> hints = {"1-6 SELECT / ENTER PICK", "R RESTART / ESC QUIT"};
+		std::array<std::string, 3> hints = {"1-6 SELECT / ENTER PICK",
+			game.order_locked ? "ORDER LOCKED" : "TAB SWITCH ORDER", "R RESTART / ESC QUIT"};
 		for (size_t i = 0; i < hints.size(); ++i) {
 			size_t first = lines.attribs.size();
 			glm::vec3 end;
-			lines.draw_text(hints[i], glm::vec3(0,-0.88f-float(i)*0.07f,0),
+			lines.draw_text(hints[i], glm::vec3(0,-0.80f-float(i)*0.07f,0),
 				glm::vec3(height,0,0), glm::vec3(0,height,0), glm::u8vec4(245,245,230,255), &end);
 			for (size_t v = first; v < lines.attribs.size(); ++v) {
 				lines.attribs[v].Position.x += aspect - 0.06f - end.x;

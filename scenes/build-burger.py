@@ -44,8 +44,8 @@ COLORS = {
 	"tomato_light": rgb("#F16A55"),
 	"onion": rgb("#F0E4EE"),
 	"pickle": rgb("#7A9A3B"),
-	"bacon": rgb("#8C3A2B"),
-	"bacon_light": rgb("#E7B79C"),
+	"bacon": rgb("#A54827"),
+	"bacon_light": rgb("#E6AD68"),
 	"sauce": rgb("#B01B1B"),
 	"floor": rgb("#26323C"),
 	"wall": rgb("#18232C"),
@@ -376,13 +376,16 @@ for index in range(segments):
 	base = 4 * index
 	next_base = 4 * (index + 1)
 	bacon_faces.extend([
-		(base, next_base, next_base + 1, base + 1),
-		(base + 2, base + 3, next_base + 3, next_base + 2),
-		(base, base + 2, next_base + 2, next_base),
-		(base + 1, next_base + 1, next_base + 3, base + 3),
+		(base + 1, next_base + 1, next_base, base),
+		(next_base + 2, next_base + 3, base + 3, base + 2),
+		(next_base, next_base + 2, base + 2, base),
+		(base + 3, next_base + 3, next_base + 1, base + 1),
 	])
 	stripe = COLORS["bacon_light"] if index % 3 == 1 else COLORS["bacon"]
 	bacon_colors.extend([COLORS["bacon"], stripe, COLORS["bacon"], COLORS["bacon"]])
+# close both ends so the bevel has a consistent outward surface
+bacon_faces.extend([(0, 2, 3, 1), (4 * segments, 4 * segments + 1, 4 * segments + 3, 4 * segments + 2)])
+bacon_colors.extend([COLORS["bacon"]] * 2)
 ingredients.append(make_object("BaconStrip", bacon_vertices, bacon_faces, bacon_colors, location=(ingredient_x + 8 * ingredient_step, ingredient_y, 0.0), bevel=0.01))
 ingredients.append(profile_object("SauceBlob", [(0.0, 0.34), (0.02, 0.40), (0.06, 0.36)], COLORS["sauce"], location=(ingredient_x + 9 * ingredient_step, ingredient_y, 0.0), wave=0.035, frequency=7, segments=28))
 

@@ -108,6 +108,8 @@ for name, (begin, end) in mesh_ranges.items():
 		offset = vertex_index * 36
 		position_normal = struct.unpack_from("<6f", pnct["pnct"], offset)
 		assert all(math.isfinite(value) for value in position_normal)
+		if name == "BaconStrip" and position_normal[2] > 0.049:
+			assert position_normal[5] > 0.0, "BaconStrip top normal points down"
 		min_z = min(min_z, position_normal[2])
 		max_z = max(max_z, position_normal[2])
 		colors.add(tuple(pnct["pnct"][offset + 24:offset + 28]))

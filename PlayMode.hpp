@@ -20,7 +20,8 @@ struct PlayMode : Mode {
 	//----- game state -----
 
 	enum class Phase { Ready, Selecting, Hovering, Descending, Closing, Lifting,
-		Transporting, Approaching, Placing, Opening, Retreating, Feedback, Sliding, GameOver };
+		Transporting, Approaching, Placing, Opening, Retreating, Feedback,
+		Serving, Dispatching, ReturningTray, Sliding, GameOver };
 	Phase phase = Phase::Ready;
 	int selected_slot = -1;
 
@@ -47,7 +48,13 @@ struct PlayMode : Mode {
 	float stack_height = 0.0f;
 	float plate_height = 0.0f;
 	Scene::Transform *plate = nullptr;
+	Scene::Transform *stack_root = nullptr, *tray = nullptr;
+	glm::vec3 tray_home{}, serve_target{}, dispatch_offset{};
+	void begin_serve();
 	Scene::Transform *recipe_board = nullptr;
+	std::array<GLuint, 10> icon_textures{};
+	GLuint icon_vao = 0, icon_buffer = 0;
+	void draw_order_icons(glm::mat4 const &clip_from_board);
 
 	std::vector<glm::vec3> bin_anchors, slide_starts;
 	Scene::Drawable::Pipeline bin_pipeline;
@@ -93,5 +100,6 @@ struct PlayMode : Mode {
 	
 	//camera
 	Scene::Camera *camera = nullptr;
+	float camera_fovy = 0;
 
 };
