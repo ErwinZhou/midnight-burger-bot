@@ -713,40 +713,23 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			lines.draw_text(label, glm::vec3(x,-0.116f,z), glm::vec3(height,0,0),
 				glm::vec3(0,0,height), color);
 		};
-		glm::u8vec4 ink(24,48,44,255), done(28,65,46,255), current(255,247,205,255);
+		glm::u8vec4 ink(24,48,44,255);
 		lines.draw(glm::vec3(0.055f,-0.125f,0.55f), glm::vec3(0.055f,-0.125f,1.86f), ink);
 		text("TIME " + std::to_string(static_cast<int>(std::ceil(game.time_left))) +
 			" / SCORE " + std::to_string(game.score), -0.25f, 1.89f, 0.075f, ink);
-		size_t progress = game.order.next;
-		if (game.pending && released) {
-			progress = game.pending->outcome == burger::PickOutcome::Wrong ? 0 : progress + 1;
-		}
 		for (size_t card = 0; card < 2; ++card) {
 			auto const &order = card == 0 ? game.order : game.waiting_order;
-		for (size_t i = 0; i < order.layers.size(); ++i) {
-			float x = -1.10f + float(card)*1.22f + float(i%5)*0.215f;
-			float z = i < 5 ? 1.20f : 0.65f;
-			auto point = [](float x, float z) { return glm::vec3(x,-0.125f,z); };
-			if (card == 0 && i == progress) {
-				lines.draw(point(x-0.01f,z),point(x+0.18f,z),current);
-				lines.draw(point(x+0.18f,z),point(x+0.18f,z+0.43f),current);
-				lines.draw(point(x+0.18f,z+0.43f),point(x-0.01f,z+0.43f),current);
-				lines.draw(point(x-0.01f,z+0.43f),point(x-0.01f,z),current);
+			for (size_t i = 0; i < order.layers.size(); ++i) {
+				float x = -1.10f + float(card)*1.22f + float(i%5)*0.215f;
+				float z = i < 5 ? 1.20f : 0.65f;
+				if (i+1 < order.layers.size() && i%5 != 4) text("+",x+0.183f,z+0.20f,0.065f,ink);
 			}
-			if (card == 0 && i < progress) {
-				lines.draw(point(x+0.10f,z+0.08f),point(x+0.13f,z+0.02f),done);
-				lines.draw(point(x+0.13f,z+0.02f),point(x+0.17f,z+0.18f),done);
-			}
-			if (i+1 < order.layers.size() && i%5 != 4) text("+",x+0.183f,z+0.20f,0.065f,ink);
-		}
-		if (order.layers.size() > 5) text("CONTINUE BELOW", -1.10f+float(card)*1.22f, 1.13f, 0.045f, ink);
 		}
 		std::string status;
 		if (released && game.pending) {
 			status = game.pending->outcome == burger::PickOutcome::Wrong ? "WRONG - TRY AGAIN" :
-				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "CORRECT");
+				(game.pending->outcome == burger::PickOutcome::Completed ? "ORDER COMPLETE!" : "");
 		}
-		if (phase == Phase::Hovering) status = "ENTER TO GRAB";
 		if (phase == Phase::GameOver) status = "TIME UP - R TO RESTART";
 		text(status, -1.07f, 0.52f, 0.08f, ink);
 	}
